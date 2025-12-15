@@ -320,9 +320,26 @@ try:
             # Prix futurs (prédictions)
             future_data = timeline[timeline['is_future'] == True]
             if not future_data.empty:
+                # Ajouter point de connexion (dernier prix réel)
+                connection_point = None
+                if not past_data.empty:
+                    last_actual = past_data.iloc[-1]
+                    connection_point = {
+                        'timestamp': last_actual['timestamp'],
+                        'predicted_price': last_actual['actual_price']
+                    }
+                
+                # Créer série avec point de connexion
+                if connection_point:
+                    future_timestamps = [connection_point['timestamp']] + future_data['timestamp'].tolist()
+                    future_prices = [connection_point['predicted_price']] + future_data['predicted_price'].tolist()
+                else:
+                    future_timestamps = future_data['timestamp'].tolist()
+                    future_prices = future_data['predicted_price'].tolist()
+                
                 fig_timeline.add_trace(go.Scatter(
-                    x=future_data['timestamp'],
-                    y=future_data['predicted_price'],
+                    x=future_timestamps,
+                    y=future_prices,
                     mode='lines',
                     name='Prix Prédit (Futur)',
                     line=dict(color='#f97316', width=3, dash='dash'),
