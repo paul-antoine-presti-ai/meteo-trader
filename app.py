@@ -196,7 +196,7 @@ try:
     # ==========================================
     
     # Tabs pour navigation
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Prédictions", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
     
     # TAB 1: PRÉDICTIONS
     with tab1:
@@ -269,8 +269,178 @@ try:
             fig_errors.update_traces(marker_color='#f97316')
             st.plotly_chart(fig_errors, use_container_width=True)
     
-    # TAB 2: MÉTÉO
+    # TAB 2: PRÉVISIONS FUTURES
     with tab2:
+        st.subheader("🔮 Prévisions Prix 48h")
+        
+        st.info("🚀 **Nouveau!** Prédictions des prix pour les prochaines 48 heures basées sur prévisions météo")
+        
+        # Import fonction prédiction
+        try:
+            from src.models.predict_future import predict_future_prices
+            
+            with st.spinner('⏳ Calcul des prédictions futures...'):
+                # Prédire J+1 et J+2
+                future_predictions = predict_future_prices(
+                    model=model,
+                    feature_columns=features,
+                    historical_data=df_full,
+                    days=2
+                )
+            
+            if not future_predictions.empty:
+                # Séparer J+1 et J+2
+                today = pd.Timestamp.now().date()
+                future_predictions['date'] = future_predictions['timestamp'].dt.date
+                
+                j1_data = future_predictions[future_predictions['date'] == today + pd.Timedelta(days=1)]
+                j2_data = future_predictions[future_predictions['date'] == today + pd.Timedelta(days=2)]
+                
+                # Métriques J+1
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    avg_j1 = j1_data['predicted_price'].mean()
+                    st.metric(
+                        label="💰 Prix Moyen J+1",
+                        value=f"{avg_j1:.2f} €/MWh",
+                        delta=f"{avg_j1 - y_test.mean():.2f} vs aujourd'hui"
+                    )
+                
+                with col2:
+                    min_j1 = j1_data['predicted_price'].min()
+                    min_hour_j1 = j1_data.loc[j1_data['predicted_price'].idxmin(), 'hour']
+                    st.metric(
+                        label="📉 Prix Minimum J+1",
+                        value=f"{min_j1:.2f} €/MWh",
+                        delta=f"À {int(min_hour_j1)}h"
+                    )
+                
+                with col3:
+                    max_j1 = j1_data['predicted_price'].max()
+                    max_hour_j1 = j1_data.loc[j1_data['predicted_price'].idxmax(), 'hour']
+                    st.metric(
+                        label="📈 Prix Maximum J+1",
+                        value=f"{max_j1:.2f} €/MWh",
+                        delta=f"À {int(max_hour_j1)}h"
+                    )
+                
+                with col4:
+                    volatility_j1 = j1_data['predicted_price'].std()
+                    st.metric(
+                        label="📊 Volatilité J+1",
+                        value=f"{volatility_j1:.2f} €/MWh",
+                        delta="Écart-type"
+                    )
+                
+                # Graphique prédictions futures
+                fig_future = go.Figure()
+                
+                # J+1
+                fig_future.add_trace(go.Scatter(
+                    x=j1_data['timestamp'],
+                    y=j1_data['predicted_price'],
+                    mode='lines+markers',
+                    name='J+1 (Demain)',
+                    line=dict(color='#f97316', width=3),
+                    marker=dict(size=6)
+                ))
+                
+                # Intervalle confiance J+1
+                fig_future.add_trace(go.Scatter(
+                    x=j1_data['timestamp'].tolist() + j1_data['timestamp'].tolist()[::-1],
+                    y=j1_data['confidence_upper'].tolist() + j1_data['confidence_lower'].tolist()[::-1],
+                    fill='toself',
+                    fillcolor='rgba(249, 115, 22, 0.2)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='Intervalle confiance J+1',
+                    showlegend=True
+                ))
+                
+                # J+2
+                if not j2_data.empty:
+                    fig_future.add_trace(go.Scatter(
+                        x=j2_data['timestamp'],
+                        y=j2_data['predicted_price'],
+                        mode='lines+markers',
+                        name='J+2 (Après-demain)',
+                        line=dict(color='#3b82f6', width=3, dash='dash'),
+                        marker=dict(size=6)
+                    ))
+                
+                # Zones heures creuses/pointe
+                for idx, row in j1_data.iterrows():
+                    if row['is_peak_hour'] == 1:
+                        fig_future.add_vrect(
+                            x0=row['timestamp'],
+                            x1=row['timestamp'] + pd.Timedelta(hours=1),
+                            fillcolor='red',
+                            opacity=0.1,
+                            line_width=0
+                        )
+                
+                fig_future.update_layout(
+                    title="Prévisions Prix Électricité 48h",
+                    xaxis_title="Date et Heure",
+                    yaxis_title="Prix (€/MWh)",
+                    hovermode='x unified',
+                    template='plotly_dark',
+                    height=500,
+                    legend=dict(
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=0.01
+                    )
+                )
+                
+                st.plotly_chart(fig_future, use_container_width=True)
+                
+                # Recommandations
+                st.subheader("💡 Recommandations")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.success(f"""
+                    **🟢 Meilleurs moments pour consommer (prix bas):**
+                    
+                    J+1:
+                    - {int(j1_data.nsmallest(1, 'predicted_price').iloc[0]['hour'])}h: {j1_data['predicted_price'].min():.2f} €/MWh
+                    - {int(j1_data.nsmallest(2, 'predicted_price').iloc[1]['hour'])}h: {j1_data.nsmallest(2, 'predicted_price').iloc[1]['predicted_price']:.2f} €/MWh
+                    - {int(j1_data.nsmallest(3, 'predicted_price').iloc[2]['hour'])}h: {j1_data.nsmallest(3, 'predicted_price').iloc[2]['predicted_price']:.2f} €/MWh
+                    
+                    💰 **Économies potentielles:** {(max_j1 - min_j1):.2f} €/MWh
+                    """)
+                
+                with col2:
+                    st.warning(f"""
+                    **🔴 Heures à éviter (prix élevés):**
+                    
+                    J+1:
+                    - {int(j1_data.nlargest(1, 'predicted_price').iloc[0]['hour'])}h: {j1_data['predicted_price'].max():.2f} €/MWh
+                    - {int(j1_data.nlargest(2, 'predicted_price').iloc[1]['hour'])}h: {j1_data.nlargest(2, 'predicted_price').iloc[1]['predicted_price']:.2f} €/MWh
+                    - {int(j1_data.nlargest(3, 'predicted_price').iloc[2]['hour'])}h: {j1_data.nlargest(3, 'predicted_price').iloc[2]['predicted_price']:.2f} €/MWh
+                    
+                    ⚠️ **Surcoût potentiel:** {(max_j1 - avg_j1):.2f} €/MWh vs moyenne
+                    """)
+                
+                # Tableau détaillé
+                with st.expander("📋 Voir prédictions détaillées heure par heure"):
+                    display_df = future_predictions[['timestamp', 'predicted_price', 'temperature_c', 'wind_speed_kmh', 'confidence_lower', 'confidence_upper']].copy()
+                    display_df.columns = ['Date/Heure', 'Prix Prédit (€/MWh)', 'Température (°C)', 'Vent (km/h)', 'IC Bas', 'IC Haut']
+                    display_df['Date/Heure'] = display_df['Date/Heure'].dt.strftime('%Y-%m-%d %H:%M')
+                    st.dataframe(display_df, use_container_width=True)
+                
+            else:
+                st.error("❌ Impossible de générer les prédictions futures. Vérifiez les données météo.")
+                
+        except Exception as e:
+            st.error(f"❌ Erreur lors des prédictions futures: {e}")
+            st.info("💡 Cette fonctionnalité nécessite les données historiques et les prévisions météo.")
+    
+    # TAB 3: MÉTÉO
+    with tab3:
         st.subheader("🌡️ Impact de la Météo sur les Prix")
         
         col1, col2 = st.columns(2)
@@ -303,8 +473,8 @@ try:
             )
             st.plotly_chart(fig_wind, use_container_width=True)
     
-    # TAB 3: PRODUCTION
-    with tab3:
+    # TAB 4: PRODUCTION
+    with tab4:
         st.subheader("⚡ Production Électrique par Filière")
         
         # Sélectionner colonnes de production
@@ -359,8 +529,8 @@ try:
                 
                 st.plotly_chart(fig_hourly, use_container_width=True)
     
-    # TAB 4: ANALYSE
-    with tab4:
+    # TAB 5: ANALYSE
+    with tab5:
         st.subheader("🎯 Feature Importance & Insights")
         
         # Feature importance
