@@ -194,7 +194,7 @@ def fetch_rte_production(start_date, end_date):
                     aggfunc='mean'  # Moyenne des 4 tranches de 15min
                 ).reset_index()
                 
-                # Renommer colonnes
+                # Renommer TOUTES les colonnes de production
                 rename_map = {
                     'NUCLEAR': 'nuclear_production_gw',
                     'WIND': 'wind_production_gw',
@@ -202,6 +202,17 @@ def fetch_rte_production(start_date, end_date):
                     'HYDRO': 'hydro_production_gw',
                     'GAS': 'gas_production_gw',
                     'COAL': 'coal_production_gw',
+                    'BIOMASS': 'biomass_production_gw',
+                    'FOSSIL_GAS': 'gas_production_gw',
+                    'FOSSIL_HARD_COAL': 'coal_production_gw',
+                    'FOSSIL_OIL': 'oil_production_gw',
+                    'HYDRO_PUMPED_STORAGE': 'hydro_pumped_production_gw',
+                    'HYDRO_RUN_OF_RIVER_AND_POUNDAGE': 'hydro_river_production_gw',
+                    'HYDRO_WATER_RESERVOIR': 'hydro_reservoir_production_gw',
+                    'WASTE': 'waste_production_gw',
+                    'WIND_OFFSHORE': 'wind_offshore_production_gw',
+                    'WIND_ONSHORE': 'wind_onshore_production_gw',
+                    'TOTAL': 'total_rte_production_gw',
                 }
                 df_pivot = df_pivot.rename(columns=rename_map)
                 
