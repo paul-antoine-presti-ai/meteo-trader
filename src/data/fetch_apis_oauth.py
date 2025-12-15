@@ -185,7 +185,7 @@ def fetch_rte_production(start_date, end_date):
             # Pivot pour avoir une colonne par type
             if not df.empty:
                 # Arrondir à l'heure et agréger
-                df['timestamp'] = df['timestamp'].dt.floor('H')
+                df['timestamp'] = df['timestamp'].dt.floor('h')
                 
                 df_pivot = df.pivot_table(
                     index='timestamp',
@@ -280,7 +280,7 @@ def fetch_rte_consumption(start_date, end_date):
                 df = df[['timestamp', 'demand_gw']]
                 
                 # Agréger par heure
-                df['timestamp'] = df['timestamp'].dt.floor('H')
+                df['timestamp'] = df['timestamp'].dt.floor('h')
                 df = df.groupby('timestamp').agg({'demand_gw': 'mean'}).reset_index()
             
             print(f"✅ {len(df)} points horaires de consommation récupérés")

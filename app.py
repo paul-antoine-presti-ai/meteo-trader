@@ -161,12 +161,23 @@ try:
     db = init_database()
     model, X_test, y_test, y_pred, features, df_full = train_model(df)
     
-    # Stocker prix réels en base
+    # Stocker TOUT l'historique réel en base (744h)
     if 'price_eur_mwh' in df_full.columns:
         try:
-            db.store_actual_prices(df_full[['timestamp', 'price_eur_mwh']].dropna(), source='Generated')
-        except:
-            pass
+            # Préparer données pour stockage
+            historical_prices = df_full[['timestamp', 'price_eur_mwh']].dropna().copy()
+            
+            # Vérifier combien de prix on a déjà
+            existing = db.get_actual_prices()
+            n_existing = len(existing)
+            
+            # Stocker tout l'historique
+            n_stored = db.store_actual_prices(historical_prices, source='RTE_Historical')
+            
+            if n_stored > 0:
+                st.success(f"✅ {n_stored} prix historiques stockés en base ({n_existing} → {n_existing + n_stored})")
+        except Exception as e:
+            st.warning(f"⚠️ Stockage historique: {str(e)}")
     
     # Métriques
     from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
