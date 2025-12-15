@@ -16,6 +16,8 @@ ENV/
 data/simulated/*.csv
 data/real/*.csv
 *.pkl
+data/*.db
+data/*.db-journal
 
 # Environment
 .env

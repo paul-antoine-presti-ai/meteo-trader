@@ -76,6 +76,12 @@ def load_data():
     return df
 
 @st.cache_resource
+def init_database():
+    """Initialise base de données"""
+    from src.data.database import PriceDatabase
+    return PriceDatabase('data/meteotrader.db')
+
+@st.cache_resource
 def train_model(df):
     """Entraîne le modèle ML"""
     from sklearn.ensemble import RandomForestRegressor
@@ -147,7 +153,15 @@ st.divider()
 
 try:
     df = load_data()
+    db = init_database()
     model, X_test, y_test, y_pred, features, df_full = train_model(df)
+    
+    # Stocker prix réels en base
+    if 'price_eur_mwh' in df_full.columns:
+        try:
+            db.store_actual_prices(df_full[['timestamp', 'price_eur_mwh']].dropna(), source='Generated')
+        except:
+            pass
     
     # Métriques
     from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -196,10 +210,245 @@ try:
     # ==========================================
     
     # Tabs pour navigation
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["⏱️ Timeline Live", "📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
     
-    # TAB 1: PRÉDICTIONS
+    # TAB 1: TIMELINE UNIFIÉE (NOUVEAU!)
     with tab1:
+        st.subheader("⏱️ Timeline Unifiée - Passé, Présent & Futur")
+        
+        st.info("🚀 **Live!** Vue complète: historique réel → maintenant → prédictions futures + tracking accuracy temps réel")
+        
+        # Calculer et stocker prédictions futures
+        try:
+            from src.models.predict_future import predict_future_prices
+            
+            # Générer prédictions J+1/J+2
+            future_predictions = predict_future_prices(
+                model=model,
+                feature_columns=features,
+                historical_data=df_full,
+                days=2
+            )
+            
+            # Stocker en base
+            if not future_predictions.empty:
+                try:
+                    db.store_predictions(future_predictions, model_version='rf_v1')
+                except:
+                    pass
+        except:
+            future_predictions = pd.DataFrame()
+        
+        # Récupérer timeline unifiée
+        timeline = db.get_unified_timeline(lookback_hours=72, lookahead_hours=48)
+        
+        if not timeline.empty:
+            # Heure actuelle
+            now = pd.Timestamp.now()
+            
+            # Métriques Accuracy en temps réel
+            st.subheader("🎯 Accuracy Temps Réel")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            # Accuracy 1h
+            with col1:
+                acc_1h = db.calculate_accuracy(period_hours=1)
+                if acc_1h['mae']:
+                    st.metric(
+                        label="📊 Accuracy 1 Heure",
+                        value=f"{acc_1h['mae']:.2f} €/MWh",
+                        delta=f"{acc_1h['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_1h['n_predictions']} prédictions"
+                    )
+                else:
+                    st.metric(label="📊 Accuracy 1 Heure", value="N/A", delta="Pas de données")
+            
+            # Accuracy 24h
+            with col2:
+                acc_24h = db.calculate_accuracy(period_hours=24)
+                if acc_24h['mae']:
+                    st.metric(
+                        label="📊 Accuracy 24 Heures",
+                        value=f"{acc_24h['mae']:.2f} €/MWh",
+                        delta=f"{acc_24h['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_24h['n_predictions']} prédictions"
+                    )
+                else:
+                    st.metric(label="📊 Accuracy 24 Heures", value="N/A", delta="Pas de données")
+            
+            # Accuracy 7j
+            with col3:
+                acc_7d = db.calculate_accuracy(period_hours=168)
+                if acc_7d['mae']:
+                    st.metric(
+                        label="📊 Accuracy 7 Jours",
+                        value=f"{acc_7d['mae']:.2f} €/MWh",
+                        delta=f"{acc_7d['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_7d['n_predictions']} prédictions"
+                    )
+                else:
+                    st.metric(label="📊 Accuracy 7 Jours", value="N/A", delta="Pas de données")
+            
+            st.divider()
+            
+            # Graphique Timeline Unifié
+            st.subheader("📈 Timeline Complète")
+            
+            fig_timeline = go.Figure()
+            
+            # Prix historiques (passé)
+            past_data = timeline[timeline['is_future'] == False]
+            if not past_data.empty:
+                fig_timeline.add_trace(go.Scatter(
+                    x=past_data['timestamp'],
+                    y=past_data['actual_price'],
+                    mode='lines',
+                    name='Prix Réel (Historique)',
+                    line=dict(color='#3b82f6', width=3),
+                    hovertemplate='%{x}<br>Prix: %{y:.2f} €/MWh<extra></extra>'
+                ))
+            
+            # Prix futurs (prédictions)
+            future_data = timeline[timeline['is_future'] == True]
+            if not future_data.empty:
+                fig_timeline.add_trace(go.Scatter(
+                    x=future_data['timestamp'],
+                    y=future_data['predicted_price'],
+                    mode='lines',
+                    name='Prix Prédit (Futur)',
+                    line=dict(color='#f97316', width=3, dash='dash'),
+                    hovertemplate='%{x}<br>Prédiction: %{y:.2f} €/MWh<extra></extra>'
+                ))
+            
+            # Ligne verticale "MAINTENANT"
+            y_min = timeline[['actual_price', 'predicted_price']].min().min()
+            y_max = timeline[['actual_price', 'predicted_price']].max().max()
+            
+            if pd.notna(y_min) and pd.notna(y_max):
+                fig_timeline.add_trace(go.Scatter(
+                    x=[now, now],
+                    y=[y_min * 0.95, y_max * 1.05],
+                    mode='lines',
+                    name='MAINTENANT',
+                    line=dict(color='red', width=3, dash='dot'),
+                    hoverinfo='skip'
+                ))
+                
+                # Bulle annotation "MAINTENANT"
+                # Trouver le prix à l'heure actuelle (interpol si nécessaire)
+                closest_past = past_data[past_data['timestamp'] <= now].tail(1)
+                if not closest_past.empty:
+                    current_price = closest_past['actual_price'].iloc[0]
+                else:
+                    current_price = (y_min + y_max) / 2
+                
+                fig_timeline.add_annotation(
+                    x=now,
+                    y=current_price,
+                    text=f"<b>MAINTENANT</b><br>{now.strftime('%H:%M')}<br>{current_price:.2f} €/MWh",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1,
+                    arrowwidth=2,
+                    arrowcolor='red',
+                    ax=50,
+                    ay=-40,
+                    bgcolor='rgba(255, 0, 0, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='white', size=12)
+                )
+            
+            # Zones passé/futur (fond coloré)
+            if not past_data.empty:
+                fig_timeline.add_vrect(
+                    x0=past_data['timestamp'].min(),
+                    x1=now,
+                    fillcolor='rgba(59, 130, 246, 0.1)',
+                    layer='below',
+                    line_width=0,
+                    annotation_text='Passé',
+                    annotation_position='top left'
+                )
+            
+            if not future_data.empty:
+                fig_timeline.add_vrect(
+                    x0=now,
+                    x1=future_data['timestamp'].max(),
+                    fillcolor='rgba(249, 115, 22, 0.1)',
+                    layer='below',
+                    line_width=0,
+                    annotation_text='Futur',
+                    annotation_position='top right'
+                )
+            
+            fig_timeline.update_layout(
+                title=f"Timeline Unifiée - Mise à jour: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+                xaxis_title="Date et Heure",
+                yaxis_title="Prix (€/MWh)",
+                hovermode='x unified',
+                template='plotly_dark',
+                height=600,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                ),
+                xaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                )
+            )
+            
+            st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # Statistiques Timeline
+            st.subheader("📊 Statistiques Timeline")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                n_past = len(past_data)
+                st.metric("🕐 Points Historiques", f"{n_past}h", help="Heures de données passées")
+            
+            with col2:
+                n_future = len(future_data)
+                st.metric("🔮 Points Futurs", f"{n_future}h", help="Heures de prédictions")
+            
+            with col3:
+                if not past_data.empty:
+                    avg_past = past_data['actual_price'].mean()
+                    st.metric("💰 Prix Moyen Passé", f"{avg_past:.2f} €/MWh")
+                else:
+                    st.metric("💰 Prix Moyen Passé", "N/A")
+            
+            with col4:
+                if not future_data.empty:
+                    avg_future = future_data['predicted_price'].mean()
+                    st.metric("💰 Prix Moyen Futur", f"{avg_future:.2f} €/MWh")
+                else:
+                    st.metric("💰 Prix Moyen Futur", "N/A")
+            
+            # Info stockage
+            st.info(f"""
+            💾 **Base de données:**
+            - {len(timeline)} points timeline totaux
+            - Stockage automatique des prédictions
+            - Calcul accuracy temps réel
+            - Historique complet sauvegardé
+            """)
+            
+        else:
+            st.warning("⚠️ Timeline vide. Les données seront disponibles après quelques heures d'utilisation.")
+    
+    # TAB 2: PRÉDICTIONS
+    with tab2:
         st.subheader("📈 Prédictions vs Prix Réels")
         
         # Time series
@@ -269,8 +518,8 @@ try:
             fig_errors.update_traces(marker_color='#f97316')
             st.plotly_chart(fig_errors, use_container_width=True)
     
-    # TAB 2: PRÉVISIONS FUTURES
-    with tab2:
+    # TAB 3: PRÉVISIONS FUTURES
+    with tab3:
         st.subheader("🔮 Prévisions Prix 48h")
         
         st.info("🚀 **Nouveau!** Prédictions des prix pour les prochaines 48 heures basées sur prévisions météo")
@@ -439,8 +688,8 @@ try:
             st.error(f"❌ Erreur lors des prédictions futures: {e}")
             st.info("💡 Cette fonctionnalité nécessite les données historiques et les prévisions météo.")
     
-    # TAB 3: MÉTÉO
-    with tab3:
+    # TAB 4: MÉTÉO
+    with tab4:
         st.subheader("🌡️ Impact de la Météo sur les Prix")
         
         col1, col2 = st.columns(2)
@@ -473,8 +722,8 @@ try:
             )
             st.plotly_chart(fig_wind, use_container_width=True)
     
-    # TAB 4: PRODUCTION
-    with tab4:
+    # TAB 5: PRODUCTION
+    with tab5:
         st.subheader("⚡ Production Électrique par Filière")
         
         # Sélectionner colonnes de production
@@ -529,8 +778,8 @@ try:
                 
                 st.plotly_chart(fig_hourly, use_container_width=True)
     
-    # TAB 5: ANALYSE
-    with tab5:
+    # TAB 6: ANALYSE
+    with tab6:
         st.subheader("🎯 Feature Importance & Insights")
         
         # Feature importance
