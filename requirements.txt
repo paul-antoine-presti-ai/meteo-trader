@@ -1,0 +1,26 @@
+# MétéoTrader - Prédiction Prix Électricité
+# Python 3.10+ (Compatible Python 3.13)
+
+# Data manipulation (versions compatibles)
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Machine Learning
+scikit-learn>=1.4.0
+
+# Visualization
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# APIs (Phase 2)
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Jupyter
+jupyter>=1.0.0
+notebook>=7.0.0
+
+# Phase 3 - Dashboard
+streamlit>=1.29.0
+plotly>=5.18.0
+
