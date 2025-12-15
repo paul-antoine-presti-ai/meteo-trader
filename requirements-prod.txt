@@ -1,0 +1,12 @@
+# Production dependencies (Streamlit Cloud)
+pandas==2.2.3
+numpy==2.2.1
+scikit-learn==1.5.1
+requests==2.32.5
+python-dotenv==1.0.1
+streamlit==1.36.0
+plotly==5.22.0
+
+# Optionnel mais recommandé
+pytz
+

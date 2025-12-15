@@ -78,7 +78,12 @@ def load_data():
 @st.cache_resource
 def init_database():
     """Initialise base de données"""
+    import os
     from src.data.database import PriceDatabase
+    
+    # S'assurer que le dossier existe
+    os.makedirs('data', exist_ok=True)
+    
     return PriceDatabase('data/meteotrader.db')
 
 @st.cache_resource
@@ -222,21 +227,24 @@ try:
         try:
             from src.models.predict_future import predict_future_prices
             
-            # Générer prédictions J+1/J+2
-            future_predictions = predict_future_prices(
-                model=model,
-                feature_columns=features,
-                historical_data=df_full,
-                days=2
-            )
-            
-            # Stocker en base
-            if not future_predictions.empty:
-                try:
-                    db.store_predictions(future_predictions, model_version='rf_v1')
-                except:
-                    pass
-        except:
+            with st.spinner('🔮 Génération prédictions futures...'):
+                # Générer prédictions J+1/J+2
+                future_predictions = predict_future_prices(
+                    model=model,
+                    feature_columns=features,
+                    historical_data=df_full,
+                    days=2
+                )
+                
+                # Stocker en base
+                if not future_predictions.empty:
+                    try:
+                        db.store_predictions(future_predictions, model_version='rf_v1')
+                        st.success(f"✅ {len(future_predictions)} prédictions stockées!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Stockage prédictions échoué: {str(e)}")
+        except Exception as e:
+            st.error(f"⚠️ Génération prédictions échouée: {str(e)}")
             future_predictions = pd.DataFrame()
         
         # Récupérer timeline unifiée

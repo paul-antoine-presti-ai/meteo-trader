@@ -123,25 +123,25 @@ def estimate_future_production(historical_data, forecast_weather):
     for col in prod_cols:
         if 'nuclear' in col.lower():
             # Nucléaire: relativement stable
-            base_production[col] = historical_data[col].mean()
+            base_production[col] = [historical_data[col].mean()] * n_hours
         elif 'wind' in col.lower():
             # Éolien: corrélé au vent
             # Modèle simple: production proportionnelle au vent
             if historical_data[col].std() > 0:
                 wind_prod = forecast_weather['wind_speed_kmh'] * 0.3  # Facteur empirique
-                base_production[col] = wind_prod.clip(0, historical_data[col].max())
+                base_production[col] = wind_prod.clip(0, historical_data[col].max()).tolist()
             else:
-                base_production[col] = historical_data[col].mean()
+                base_production[col] = [historical_data[col].mean()] * n_hours
         elif 'solar' in col.lower():
             # Solaire: corrélé à radiation
             if historical_data[col].std() > 0:
                 solar_prod = forecast_weather['solar_radiation_wm2'] * 0.01  # Facteur empirique
-                base_production[col] = solar_prod.clip(0, historical_data[col].max())
+                base_production[col] = solar_prod.clip(0, historical_data[col].max()).tolist()
             else:
-                base_production[col] = historical_data[col].mean()
+                base_production[col] = [historical_data[col].mean()] * n_hours
         else:
             # Autres: moyenne historique
-            base_production[col] = historical_data[col].mean()
+            base_production[col] = [historical_data[col].mean()] * n_hours
     
     # Créer DataFrame
     prod_forecast = pd.DataFrame(base_production)

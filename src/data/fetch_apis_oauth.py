@@ -113,7 +113,7 @@ def fetch_rte_wholesale_prices(start_date, end_date):
             
             # Agréger par heure (moyenne des 4 tranches de 15min)
             if not df.empty:
-                df['timestamp'] = df['timestamp'].dt.floor('H')  # Arrondir à l'heure
+                df['timestamp'] = df['timestamp'].dt.floor('h')  # Arrondir à l'heure
                 df = df.groupby('timestamp').agg({'price_eur_mwh': 'mean'}).reset_index()
             
             print(f"✅ {len(df)} prix horaires récupérés")
