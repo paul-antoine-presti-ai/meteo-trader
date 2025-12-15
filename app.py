@@ -66,11 +66,12 @@ def load_data():
     sys.path.append('.')
     from src.data.fetch_apis_oauth import fetch_all_data
     
-    # Récupérer 1 mois de données
-    end_date = datetime.now().date() - timedelta(days=1)
+    # Récupérer 1 mois de données JUSQU'À MAINTENANT
+    # Note: APIs RTE ont ~2h de retard, mais Open-Meteo est à jour
+    end_date = datetime.now().date()  # Aujourd'hui!
     start_date = end_date - timedelta(days=30)
     
-    with st.spinner('📊 Récupération des données...'):
+    with st.spinner('📊 Récupération des données (jusqu\'à maintenant)...'):
         df = fetch_all_data(str(start_date), str(end_date))
     
     return df
@@ -261,6 +262,30 @@ try:
         # Récupérer timeline unifiée
         timeline = db.get_unified_timeline(lookback_hours=72, lookahead_hours=48)
         
+        # Combler gap entre dernière donnée réelle et maintenant avec prédictions récentes
+        if not timeline.empty:
+            now = pd.Timestamp.now()
+            past_data_check = timeline[timeline['is_future'] == False]
+            
+            if not past_data_check.empty:
+                last_actual_time = past_data_check['timestamp'].max()
+                gap_hours = (now - last_actual_time).total_seconds() / 3600
+                
+                # Si gap > 1h, utiliser prédictions récentes pour combler
+                if gap_hours > 1:
+                    st.info(f"ℹ️ Gap de {gap_hours:.1f}h entre dernière donnée réelle ({last_actual_time.strftime('%H:%M')}) et maintenant. APIs RTE ont du retard.")
+                    
+                    # Trouver prédictions dans le gap
+                    gap_predictions = timeline[
+                        (timeline['is_future'] == True) & 
+                        (timeline['timestamp'] > last_actual_time) &
+                        (timeline['timestamp'] <= now)
+                    ].copy()
+                    
+                    if not gap_predictions.empty:
+                        # Afficher ces prédictions comme "estimations récentes"
+                        st.caption(f"📊 {len(gap_predictions)} points estimés pour combler le gap (en orange clair)")
+        
         if not timeline.empty:
             # Heure actuelle
             now = pd.Timestamp.now()
@@ -328,34 +353,78 @@ try:
                     hovertemplate='%{x}<br>Prix: %{y:.2f} €/MWh<extra></extra>'
                 ))
             
+            # Gap entre dernière donnée et maintenant (si existe)
+            if not past_data.empty:
+                last_actual_time = past_data['timestamp'].max()
+                gap_data = timeline[
+                    (timeline['is_future'] == True) & 
+                    (timeline['timestamp'] > last_actual_time) &
+                    (timeline['timestamp'] <= now)
+                ]
+                
+                if not gap_data.empty:
+                    # Courbe gap (orange clair, pointillés légers)
+                    last_actual = past_data.iloc[-1]
+                    gap_timestamps = [last_actual['timestamp']] + gap_data['timestamp'].tolist()
+                    gap_prices = [last_actual['actual_price']] + gap_data['predicted_price'].tolist()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=gap_timestamps,
+                        y=gap_prices,
+                        mode='lines',
+                        name='Estimation Gap (APIs en retard)',
+                        line=dict(color='#fb923c', width=2, dash='dot'),
+                        hovertemplate='%{x}<br>Estimation: %{y:.2f} €/MWh<extra></extra>',
+                        showlegend=True
+                    ))
+            
             # Prix futurs (prédictions)
             future_data = timeline[timeline['is_future'] == True]
             if not future_data.empty:
-                # Ajouter point de connexion (dernier prix réel)
-                connection_point = None
-                if not past_data.empty:
-                    last_actual = past_data.iloc[-1]
-                    connection_point = {
-                        'timestamp': last_actual['timestamp'],
-                        'predicted_price': last_actual['actual_price']
-                    }
+                # Filtrer pour garder seulement le vrai futur (après maintenant)
+                future_data = future_data[future_data['timestamp'] > now]
                 
-                # Créer série avec point de connexion
-                if connection_point:
-                    future_timestamps = [connection_point['timestamp']] + future_data['timestamp'].tolist()
-                    future_prices = [connection_point['predicted_price']] + future_data['predicted_price'].tolist()
-                else:
-                    future_timestamps = future_data['timestamp'].tolist()
-                    future_prices = future_data['predicted_price'].tolist()
-                
-                fig_timeline.add_trace(go.Scatter(
-                    x=future_timestamps,
-                    y=future_prices,
-                    mode='lines',
-                    name='Prix Prédit (Futur)',
-                    line=dict(color='#f97316', width=3, dash='dash'),
-                    hovertemplate='%{x}<br>Prédiction: %{y:.2f} €/MWh<extra></extra>'
-                ))
+                if not future_data.empty:
+                    # Point de connexion (soit gap, soit dernier réel)
+                    connection_point = None
+                    gap_exists = not past_data.empty and (now - past_data['timestamp'].max()).total_seconds() / 3600 > 1
+                    
+                    if gap_exists:
+                        # Connexion depuis le gap
+                        gap_data_for_conn = timeline[
+                            (timeline['is_future'] == True) & 
+                            (timeline['timestamp'] <= now)
+                        ]
+                        if not gap_data_for_conn.empty:
+                            last_gap = gap_data_for_conn.iloc[-1]
+                            connection_point = {
+                                'timestamp': last_gap['timestamp'],
+                                'predicted_price': last_gap['predicted_price']
+                            }
+                    elif not past_data.empty:
+                        # Connexion depuis dernier réel
+                        last_actual = past_data.iloc[-1]
+                        connection_point = {
+                            'timestamp': last_actual['timestamp'],
+                            'predicted_price': last_actual['actual_price']
+                        }
+                    
+                    # Créer série avec point de connexion
+                    if connection_point:
+                        future_timestamps = [connection_point['timestamp']] + future_data['timestamp'].tolist()
+                        future_prices = [connection_point['predicted_price']] + future_data['predicted_price'].tolist()
+                    else:
+                        future_timestamps = future_data['timestamp'].tolist()
+                        future_prices = future_data['predicted_price'].tolist()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=future_timestamps,
+                        y=future_prices,
+                        mode='lines',
+                        name='Prix Prédit (Futur)',
+                        line=dict(color='#f97316', width=3, dash='dash'),
+                        hovertemplate='%{x}<br>Prédiction: %{y:.2f} €/MWh<extra></extra>'
+                    ))
             
             # Ligne verticale "MAINTENANT"
             y_min = timeline[['actual_price', 'predicted_price']].min().min()
