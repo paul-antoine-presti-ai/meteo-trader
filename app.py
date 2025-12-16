@@ -32,6 +32,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Injecter CSS personnalisé (Dark Mode + Glassmorphism + Orange Mistral)
+def load_custom_css():
+    """Charge CSS personnalisé pour theme glassmorphism"""
+    try:
+        with open('assets/style.css') as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass  # CSS optionnel
+
+load_custom_css()
+
 # CSS Custom (dark mode élégant)
 st.markdown("""
 <style>
@@ -428,44 +439,56 @@ try:
                         hovertemplate='%{x}<br>Prédiction: %{y:.2f} €/MWh<extra></extra>'
                     ))
             
-            # Ligne verticale "MAINTENANT"
+            # Marker "MAINTENANT" - Bulle blanche élégante
             y_min = timeline[['actual_price', 'predicted_price']].min().min()
             y_max = timeline[['actual_price', 'predicted_price']].max().max()
             
             if pd.notna(y_min) and pd.notna(y_max):
+                # Ligne verticale fine (discrète)
                 fig_timeline.add_trace(go.Scatter(
                     x=[now, now],
                     y=[y_min * 0.95, y_max * 1.05],
                     mode='lines',
-                    name='MAINTENANT',
-                    line=dict(color='red', width=3, dash='dot'),
-                    hoverinfo='skip'
+                    name='NOW',
+                    line=dict(color='rgba(255, 255, 255, 0.3)', width=1, dash='dot'),
+                    hoverinfo='skip',
+                    showlegend=False
                 ))
                 
-                # Bulle annotation "MAINTENANT"
-                # Trouver le prix à l'heure actuelle (interpol si nécessaire)
+                # Trouver le prix à l'heure actuelle
                 closest_past = past_data[past_data['timestamp'] <= now].tail(1)
                 if not closest_past.empty:
                     current_price = closest_past['actual_price'].iloc[0]
                 else:
                     current_price = (y_min + y_max) / 2
                 
-                fig_timeline.add_annotation(
-                    x=now,
-                    y=current_price,
-                    text=f"<b>MAINTENANT</b><br>{now.strftime('%H:%M')}<br>{current_price:.2f} €/MWh",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=2,
-                    arrowcolor='red',
-                    ax=50,
-                    ay=-40,
-                    bgcolor='rgba(255, 0, 0, 0.8)',
-                    bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='white', size=12)
-                )
+                # Bulle NOW (marker sur la courbe)
+                fig_timeline.add_trace(go.Scatter(
+                    x=[now],
+                    y=[current_price],
+                    mode='markers+text',
+                    name='MAINTENANT',
+                    marker=dict(
+                        size=16,
+                        color='white',
+                        line=dict(color='#f97316', width=3),  # Bordure orange Mistral
+                        opacity=0.95
+                    ),
+                    text=['NOW'],
+                    textposition='top center',
+                    textfont=dict(
+                        size=11,
+                        color='white',
+                        family='Arial, sans-serif'
+                    ),
+                    hovertemplate=(
+                        '<b style="color:#f97316;">MAINTENANT</b><br>' +
+                        f'<b>{now.strftime("%d %b %H:%M")}</b><br>' +
+                        f'Prix: <b>{current_price:.2f} €/MWh</b>' +
+                        '<extra></extra>'
+                    ),
+                    showlegend=False
+                ))
             
             # Zones passé/futur (fond coloré)
             if not past_data.empty:
@@ -491,37 +514,53 @@ try:
                 )
             
             # Centrer timeline sur MAINTENANT (scroll automatique)
-            # Vue: 36h avant → NOW (centre) → 24h après
-            x_min = now - pd.Timedelta(hours=36)
-            x_max = now + pd.Timedelta(hours=24)
+            # Vue symétrique: 30h avant ← NOW (centre exact) → 30h après
+            x_min = now - pd.Timedelta(hours=30)
+            x_max = now + pd.Timedelta(hours=30)
             
             fig_timeline.update_layout(
-                title=f"Timeline Unifiée - Centrée sur MAINTENANT - Mise à jour: {now.strftime('%Y-%m-%d %H:%M:%S')}",
-                xaxis_title="Date et Heure",
+                title=dict(
+                    text=f"<b>Timeline Unifiée</b> · Centrée sur MAINTENANT · {now.strftime('%d %b %H:%M')}",
+                    font=dict(size=18, color='white'),
+                    x=0.5,
+                    xanchor='center'
+                ),
+                xaxis_title="",  # Minimaliste
                 yaxis_title="Prix (€/MWh)",
                 hovermode='x unified',
                 template='plotly_dark',
                 height=600,
+                paper_bgcolor='rgba(10, 10, 10, 0.8)',  # Glass dark
+                plot_bgcolor='rgba(26, 26, 26, 0.5)',   # Glass
                 legend=dict(
                     yanchor="top",
                     y=0.99,
                     xanchor="left",
-                    x=0.01
+                    x=0.01,
+                    bgcolor='rgba(26, 26, 26, 0.7)',
+                    bordercolor='rgba(255, 255, 255, 0.1)',
+                    borderwidth=1
                 ),
                 xaxis=dict(
                     range=[x_min, x_max],  # Fenêtre fixe centrée sur NOW
                     showgrid=True,
-                    gridcolor='rgba(255,255,255,0.1)',
-                    rangeslider=dict(visible=False)  # Pas de slider en bas
+                    gridcolor='rgba(255,255,255,0.05)',
+                    rangeslider=dict(visible=False),
+                    zeroline=False
                 ),
                 yaxis=dict(
                     showgrid=True,
-                    gridcolor='rgba(255,255,255,0.1)'
+                    gridcolor='rgba(255,255,255,0.05)',
+                    zeroline=False
+                ),
+                font=dict(
+                    family='Arial, sans-serif',
+                    color='rgba(255, 255, 255, 0.9)'
                 )
             )
             
             # Info scrolling
-            st.caption("📍 **Timeline centrée sur MAINTENANT** - Les données défilent automatiquement au fil du temps (36h passé ← NOW → 24h futur)")
+            st.caption("📍 **Timeline centrée sur MAINTENANT** - Vue symétrique: 30h passé ← 🔴 NOW → 30h futur (scroll automatique)")
             
             st.plotly_chart(fig_timeline, use_container_width=True)
             

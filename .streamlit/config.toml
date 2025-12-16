@@ -1,8 +1,8 @@
 [theme]
-primaryColor = "#f97316"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#1e2130"
-textColor = "#ffffff"
+primaryColor = "#f97316"  # Orange Mistral
+backgroundColor = "#0a0a0a"  # Noir profond (glass mode)
+secondaryBackgroundColor = "#1a1a1a"  # Gris foncé glass
+textColor = "#ffffff"  # Blanc pur
 font = "sans serif"
 
 [server]
