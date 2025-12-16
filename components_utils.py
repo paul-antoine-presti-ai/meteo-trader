@@ -8,7 +8,7 @@ import pytz
 
 def display_clock_header():
     """
-    Affiche une horloge LIVE avec JavaScript qui se met à jour automatiquement
+    Affiche une barre sticky minimaliste en haut avec horloge LIVE
     """
     import streamlit.components.v1 as components
     
@@ -21,60 +21,74 @@ def display_clock_header():
     hours_to_update = int(time_to_update.total_seconds() / 3600)
     minutes_to_update = int((time_to_update.total_seconds() % 3600) / 60)
     
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
-    with col1:
-        # Horloge JavaScript LIVE
-        components.html(f"""
-        <div style="background: transparent;">
+    # Barre sticky horizontale minimaliste
+    components.html(f"""
+    <div style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(135deg, #1a1a1a 0%, #0c0c0c 100%);
+        border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+        padding: 8px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        z-index: 9999;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    ">
+        <!-- Horloge à gauche -->
+        <div style="display: flex; align-items: center; gap: 16px;">
             <div id="live-clock" style="
-                font-size: 28px;
-                font-weight: 300;
+                font-size: 18px;
+                font-weight: 400;
                 color: #ffffff;
                 font-family: 'SF Mono', Monaco, monospace;
-                letter-spacing: 2px;
-                padding: 8px 0;
-                margin: 0;
+                letter-spacing: 1px;
             ">
                 {now.strftime('%H:%M:%S')}
             </div>
             <div style="
-                font-size: 13px;
+                font-size: 11px;
                 color: #a0a0a0;
-                margin-top: 4px;
+                border-left: 1px solid #333;
+                padding-left: 12px;
             ">
-                <strong style="color: #ff6b35;">Europe/Paris</strong> · {now.strftime('%A %d %B %Y')}
+                <span style="color: #ff6b35; font-weight: 500;">Europe/Paris</span> · {now.strftime('%d %b %Y')}
             </div>
         </div>
         
-        <script>
-        function updateClock() {{
-            const now = new Date();
-            const hours = String(now.getHours()).padStart(2, '0');
-            const minutes = String(now.getMinutes()).padStart(2, '0');
-            const seconds = String(now.getSeconds()).padStart(2, '0');
-            const clockElement = document.getElementById('live-clock');
-            if (clockElement) {{
-                clockElement.textContent = hours + ':' + minutes + ':' + seconds;
-            }}
+        <!-- Timer MAJ à droite -->
+        <div style="
+            background: rgba(255, 107, 53, 0.1);
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 6px;
+            padding: 4px 12px;
+            font-size: 11px;
+            color: #ff6b35;
+            font-weight: 500;
+        ">
+            🔄 MAJ dans {"{}h{:02d}".format(hours_to_update, minutes_to_update) if hours_to_update > 0 else "{}min".format(minutes_to_update)}
+        </div>
+    </div>
+    
+    <script>
+    function updateClock() {{
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        const clockElement = document.getElementById('live-clock');
+        if (clockElement) {{
+            clockElement.textContent = hours + ':' + minutes + ':' + seconds;
         }}
-        
-        // Mettre à jour toutes les secondes
-        setInterval(updateClock, 1000);
-        updateClock();
-        </script>
-        """, height=80)
+    }}
     
-    with col2:
-        st.markdown("")  # Espace
-    
-    with col3:
-        if hours_to_update > 0:
-            st.metric("🔄 MAJ", f"Dans {hours_to_update}h{minutes_to_update:02d}")
-        else:
-            st.metric("🔄 MAJ", f"Dans {minutes_to_update}min")
-    
-    st.divider()
+    // Mettre à jour toutes les secondes
+    setInterval(updateClock, 1000);
+    updateClock();
+    </script>
+    """, height=45)
 
 
 def display_data_freshness(last_data_time):
