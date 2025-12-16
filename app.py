@@ -686,6 +686,9 @@ def page_france(df_france, model, features):
     tab1, tab2, tab3 = st.tabs(["📊 Production Mix", "🌡️ Météo", "📈 Prédictions"])
     
     with tab1:
+        # Copie de travail (éviter UnboundLocalError si merge ENTSOE-E)
+        df_work = df_france.copy()
+        
         st.markdown("### Mix Énergétique France")
         st.caption("📊 **Répartition de la production électrique en temps réel** : Visualisation du mix par source (nucléaire, hydraulique, éolien, solaire, fossile). Données mises à jour chaque heure via l'API RTE.")
         
@@ -712,8 +715,8 @@ def page_france(df_france, model, features):
                 
                 if not prod_df.empty and 'timestamp' in prod_df.columns:
                     # Merger avec df_france
-                    df_france = pd.merge(df_france, prod_df, on='timestamp', how='left', suffixes=('', '_entsoe'))
-                    prod_cols = [c for c in df_france.columns if 'production_gw' in c.lower() and c not in ['total_production_gw', 'total_rte_production_gw']]
+                    df_work = pd.merge(df_france, prod_df, on='timestamp', how='left', suffixes=('', '_entsoe'))
+                    prod_cols = [c for c in df_work.columns if 'production_gw' in c.lower() and c not in ['total_production_gw', 'total_rte_production_gw']]
                     st.success(f"✅ {len(prod_cols)} sources d'énergie chargées depuis ENTSOE-E")
                 else:
                     st.error("❌ Impossible de charger les données de production")
@@ -723,7 +726,7 @@ def page_france(df_france, model, features):
                 prod_cols = []
         
         if prod_cols and len(prod_cols) > 0:
-            latest = df_france.iloc[-1]
+            latest = df_work.iloc[-1]
             
             # Calculer totaux par catégorie (compatible RTE et ENTSOE-E)
             nuclear = latest.get('nuclear_production_gw', latest.get('Nuclear_production_gw', 0))
@@ -803,7 +806,7 @@ def page_france(df_france, model, features):
                 st.markdown("### 📊 Évolution 24h")
                 
                 # Graphique historique (dernières 24h)
-                last_24h = df_france.tail(24)
+                last_24h = df_work.tail(24)
                 
                 fig_evolution = go.Figure()
                 
