@@ -55,6 +55,48 @@ class PriceDatabase:
             )
         ''')
         
+        # Table contrats clients
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_name TEXT NOT NULL,
+                volume_mwh REAL NOT NULL,
+                guaranteed_price_eur_mwh REAL NOT NULL,
+                start_date DATETIME NOT NULL,
+                end_date DATETIME NOT NULL,
+                status TEXT DEFAULT 'active',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Table recommandations
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS recommendations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                action TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                volume_mwh REAL,
+                target_price_eur_mwh REAL,
+                expected_gain_eur REAL,
+                reasoning TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Table alertes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                alert_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Index pour performance
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_predictions_target 
@@ -64,6 +106,16 @@ class PriceDatabase:
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_actual_timestamp 
             ON actual_prices(timestamp)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contracts_status 
+            ON contracts(status)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_alerts_active 
+            ON alerts(is_active)
         ''')
         
         self.conn.commit()
@@ -365,6 +417,181 @@ class PriceDatabase:
         timeline = timeline.sort_values('timestamp').reset_index(drop=True)
         
         return timeline
+    
+    # ===== GESTION CONTRATS =====
+    
+    def add_contract(self, client_name, volume_mwh, guaranteed_price, start_date, end_date):
+        """
+        Ajoute un nouveau contrat client
+        
+        Args:
+            client_name: Nom du client
+            volume_mwh: Volume total en MWh
+            guaranteed_price: Prix garanti en €/MWh
+            start_date: Date début
+            end_date: Date fin
+        
+        Returns:
+            ID du contrat créé
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO contracts (client_name, volume_mwh, guaranteed_price_eur_mwh, start_date, end_date)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (client_name, volume_mwh, guaranteed_price, start_date, end_date))
+        
+        self.conn.commit()
+        return cursor.lastrowid
+    
+    def get_active_contracts(self):
+        """
+        Récupère tous les contrats actifs
+        
+        Returns:
+            DataFrame avec contrats actifs
+        """
+        query = '''
+            SELECT * FROM contracts 
+            WHERE status = 'active' 
+            AND date('now') BETWEEN date(start_date) AND date(end_date)
+            ORDER BY created_at DESC
+        '''
+        
+        df = pd.read_sql_query(query, self.conn)
+        if not df.empty:
+            df['start_date'] = pd.to_datetime(df['start_date'])
+            df['end_date'] = pd.to_datetime(df['end_date'])
+            df['created_at'] = pd.to_datetime(df['created_at'])
+        
+        return df
+    
+    def update_contract_status(self, contract_id, status):
+        """
+        Met à jour le statut d'un contrat
+        
+        Args:
+            contract_id: ID du contrat
+            status: Nouveau statut (active, completed, cancelled)
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE contracts 
+            SET status = ? 
+            WHERE id = ?
+        ''', (status, contract_id))
+        
+        self.conn.commit()
+    
+    # ===== GESTION RECOMMANDATIONS =====
+    
+    def store_recommendation(self, action, score, volume_mwh=None, target_price=None, 
+                           expected_gain=None, reasoning=None):
+        """
+        Stocke une recommandation
+        
+        Args:
+            action: BUY, HOLD, HEDGE
+            score: Score 0-100
+            volume_mwh: Volume recommandé
+            target_price: Prix cible
+            expected_gain: Gain attendu en €
+            reasoning: Explication
+        
+        Returns:
+            ID de la recommandation
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO recommendations 
+            (timestamp, action, score, volume_mwh, target_price_eur_mwh, expected_gain_eur, reasoning)
+            VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)
+        ''', (action, score, volume_mwh, target_price, expected_gain, reasoning))
+        
+        self.conn.commit()
+        return cursor.lastrowid
+    
+    def get_latest_recommendation(self):
+        """
+        Récupère la dernière recommandation
+        
+        Returns:
+            Dict avec la recommandation ou None
+        """
+        query = '''
+            SELECT * FROM recommendations 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        '''
+        
+        df = pd.read_sql_query(query, self.conn)
+        
+        if df.empty:
+            return None
+        
+        return df.iloc[0].to_dict()
+    
+    # ===== GESTION ALERTES =====
+    
+    def create_alert(self, alert_type, severity, message):
+        """
+        Crée une nouvelle alerte
+        
+        Args:
+            alert_type: Type (price, opportunity, risk)
+            severity: Sévérité (high, medium, low)
+            message: Message
+        
+        Returns:
+            ID de l'alerte
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO alerts (timestamp, alert_type, severity, message)
+            VALUES (datetime('now'), ?, ?, ?)
+        ''', (alert_type, severity, message))
+        
+        self.conn.commit()
+        return cursor.lastrowid
+    
+    def get_active_alerts(self, limit=10):
+        """
+        Récupère les alertes actives
+        
+        Args:
+            limit: Nombre max d'alertes
+        
+        Returns:
+            DataFrame avec alertes actives
+        """
+        query = '''
+            SELECT * FROM alerts 
+            WHERE is_active = 1 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        '''
+        
+        df = pd.read_sql_query(query, self.conn, params=[limit])
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['created_at'] = pd.to_datetime(df['created_at'])
+        
+        return df
+    
+    def dismiss_alert(self, alert_id):
+        """
+        Désactive une alerte
+        
+        Args:
+            alert_id: ID de l'alerte
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE alerts 
+            SET is_active = 0 
+            WHERE id = ?
+        ''', (alert_id,))
+        
+        self.conn.commit()
     
     def close(self):
         """Ferme connexion BDD"""
