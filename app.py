@@ -162,21 +162,23 @@ try:
     db = init_database()
     model, X_test, y_test, y_pred, features, df_full = train_model(df)
     
-    # Stocker TOUT l'historique réel en base (744h)
+    # Stocker SEULEMENT l'historique RÉEL (avant maintenant!)
     if 'price_eur_mwh' in df_full.columns:
         try:
-            # Préparer données pour stockage
-            historical_prices = df_full[['timestamp', 'price_eur_mwh']].dropna().copy()
+            # Filtrer UNIQUEMENT les données passées (avant maintenant)
+            now = pd.Timestamp.now()
+            historical_prices = df_full[df_full['timestamp'] < now][['timestamp', 'price_eur_mwh']].dropna().copy()
             
             # Vérifier combien de prix on a déjà
             existing = db.get_actual_prices()
             n_existing = len(existing)
             
-            # Stocker tout l'historique
+            # Stocker seulement le VRAI historique
             n_stored = db.store_actual_prices(historical_prices, source='RTE_Historical')
             
             if n_stored > 0:
-                st.success(f"✅ {n_stored} prix historiques stockés en base ({n_existing} → {n_existing + n_stored})")
+                last_actual = historical_prices['timestamp'].max()
+                st.success(f"✅ {n_stored} prix historiques stockés (jusqu'à {last_actual.strftime('%d %b %H:%M')})")
         except Exception as e:
             st.warning(f"⚠️ Stockage historique: {str(e)}")
     
@@ -227,7 +229,7 @@ try:
     # ==========================================
     
     # Tabs pour navigation
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["⏱️ Timeline Live", "📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["⏱️ Timeline Live", "🗺️ Carte Europe", "📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
     
     # TAB 1: TIMELINE UNIFIÉE (NOUVEAU!)
     with tab1:
@@ -488,8 +490,13 @@ try:
                     annotation_position='top right'
                 )
             
+            # Centrer timeline sur MAINTENANT (scroll automatique)
+            # Vue: 36h avant → NOW (centre) → 24h après
+            x_min = now - pd.Timedelta(hours=36)
+            x_max = now + pd.Timedelta(hours=24)
+            
             fig_timeline.update_layout(
-                title=f"Timeline Unifiée - Mise à jour: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+                title=f"Timeline Unifiée - Centrée sur MAINTENANT - Mise à jour: {now.strftime('%Y-%m-%d %H:%M:%S')}",
                 xaxis_title="Date et Heure",
                 yaxis_title="Prix (€/MWh)",
                 hovermode='x unified',
@@ -502,14 +509,19 @@ try:
                     x=0.01
                 ),
                 xaxis=dict(
+                    range=[x_min, x_max],  # Fenêtre fixe centrée sur NOW
                     showgrid=True,
-                    gridcolor='rgba(255,255,255,0.1)'
+                    gridcolor='rgba(255,255,255,0.1)',
+                    rangeslider=dict(visible=False)  # Pas de slider en bas
                 ),
                 yaxis=dict(
                     showgrid=True,
                     gridcolor='rgba(255,255,255,0.1)'
                 )
             )
+            
+            # Info scrolling
+            st.caption("📍 **Timeline centrée sur MAINTENANT** - Les données défilent automatiquement au fil du temps (36h passé ← NOW → 24h futur)")
             
             st.plotly_chart(fig_timeline, use_container_width=True)
             
@@ -552,8 +564,199 @@ try:
         else:
             st.warning("⚠️ Timeline vide. Les données seront disponibles après quelques heures d'utilisation.")
     
-    # TAB 2: PRÉDICTIONS
+    # TAB 2: CARTE EUROPÉENNE
     with tab2:
+        st.subheader("🗺️ Prix de l'Électricité en Europe")
+        
+        st.info("📊 Visualisation des prix spot sur le marché européen interconnecté (comme RTE éCO2mix)")
+        
+        try:
+            from src.data.fetch_europe_prices import get_european_prices
+            
+            # Récupérer prix européens
+            with st.spinner('🌍 Chargement prix européens...'):
+                europe_df = get_european_prices()
+            
+            # Métriques clés
+            col1, col2, col3, col4 = st.columns(4)
+            
+            france_price = europe_df[europe_df['country_code'] == 'FR']['price_eur_mwh'].values[0]
+            min_price = europe_df['price_eur_mwh'].min()
+            max_price = europe_df['price_eur_mwh'].max()
+            avg_price = europe_df['price_eur_mwh'].mean()
+            
+            cheapest_country = europe_df.iloc[0]['country_name']
+            most_expensive_country = europe_df.iloc[-1]['country_name']
+            
+            with col1:
+                st.metric(
+                    label="🇫🇷 France",
+                    value=f"{france_price:.2f} €/MWh",
+                    help="Prix spot France (référence)"
+                )
+            
+            with col2:
+                st.metric(
+                    label="💚 Moins cher",
+                    value=f"{min_price:.2f} €/MWh",
+                    delta=f"{min_price - france_price:.2f} vs FR",
+                    help=f"{cheapest_country}"
+                )
+            
+            with col3:
+                st.metric(
+                    label="🔥 Plus cher",
+                    value=f"{max_price:.2f} €/MWh",
+                    delta=f"{max_price - france_price:.2f} vs FR",
+                    help=f"{most_expensive_country}"
+                )
+            
+            with col4:
+                st.metric(
+                    label="📊 Moyenne UE",
+                    value=f"{avg_price:.2f} €/MWh",
+                    delta=f"{avg_price - france_price:.2f} vs FR"
+                )
+            
+            st.divider()
+            
+            # Carte interactive
+            st.subheader("🌍 Carte Interactive des Prix")
+            
+            import plotly.graph_objects as go
+            
+            # Créer figure
+            fig_map = go.Figure()
+            
+            # Ajouter points pour chaque pays
+            for _, row in europe_df.iterrows():
+                # Couleur basée sur prix
+                if row['price_eur_mwh'] < 60:
+                    color = '#10b981'  # Vert
+                    size = 15
+                elif row['price_eur_mwh'] < 80:
+                    color = '#f59e0b'  # Orange
+                    size = 18
+                else:
+                    color = '#ef4444'  # Rouge
+                    size = 21
+                
+                # Marker pour le pays
+                fig_map.add_trace(go.Scattergeo(
+                    lon=[row['longitude']],
+                    lat=[row['latitude']],
+                    text=row['country_name'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=size,
+                        color=color,
+                        line=dict(width=2, color='white'),
+                        opacity=0.9
+                    ),
+                    textposition='top center',
+                    textfont=dict(size=10, color='white'),
+                    hovertemplate=(
+                        f"<b>{row['country_name']}</b><br>" +
+                        f"Prix: {row['price_eur_mwh']:.2f} €/MWh<br>" +
+                        f"vs France: {row['diff_vs_france']:+.2f} €/MWh" +
+                        "<extra></extra>"
+                    ),
+                    name=row['country_name'],
+                    showlegend=False
+                ))
+            
+            # Configuration carte
+            fig_map.update_geos(
+                scope='europe',
+                projection_type='natural earth',
+                showland=True,
+                landcolor='rgb(30, 30, 30)',
+                showocean=True,
+                oceancolor='rgb(20, 20, 30)',
+                showcountries=True,
+                countrycolor='rgb(50, 50, 50)',
+                showlakes=True,
+                lakecolor='rgb(20, 20, 30)',
+                center=dict(lat=50, lon=10),
+                lonaxis_range=[-12, 30],
+                lataxis_range=[35, 70]
+            )
+            
+            fig_map.update_layout(
+                title=f"Prix Spot Électricité - Europe ({datetime.now().strftime('%d %b %Y %H:%M')})",
+                height=600,
+                template='plotly_dark',
+                margin=dict(l=0, r=0, t=50, b=0),
+                hoverlabel=dict(
+                    bgcolor='rgba(0,0,0,0.8)',
+                    font_size=12
+                )
+            )
+            
+            st.plotly_chart(fig_map, use_container_width=True)
+            
+            # Légende couleurs
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("🟢 **< 60 €/MWh** - Bon marché")
+            with col2:
+                st.markdown("🟠 **60-80 €/MWh** - Moyen")
+            with col3:
+                st.markdown("🔴 **> 80 €/MWh** - Cher")
+            
+            st.divider()
+            
+            # Tableau des prix
+            st.subheader("📊 Prix par Pays")
+            
+            # Préparer tableau
+            display_df = europe_df[['country_name', 'price_eur_mwh', 'diff_vs_france']].copy()
+            display_df.columns = ['Pays', 'Prix (€/MWh)', 'Écart vs France (€/MWh)']
+            
+            # Afficher en 3 colonnes
+            col1, col2, col3 = st.columns(3)
+            
+            n = len(display_df)
+            chunk_size = (n + 2) // 3
+            
+            with col1:
+                st.dataframe(
+                    display_df.iloc[:chunk_size].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            with col2:
+                st.dataframe(
+                    display_df.iloc[chunk_size:2*chunk_size].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            with col3:
+                st.dataframe(
+                    display_df.iloc[2*chunk_size:].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            # Informations
+            st.info("""
+            💡 **Réseau Européen Interconnecté:**
+            - Les prix convergent entre pays interconnectés
+            - Écarts de prix = saturation des capacités d'échange
+            - Mutualisation permet d'optimiser coûts et émissions CO2
+            
+            📊 **Sources:** EPEX Spot / ENTSO-E Transparency Platform (données simulées pour MVP)
+            """)
+            
+        except Exception as e:
+            st.error(f"❌ Erreur chargement carte: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # TAB 3: PRÉDICTIONS
+    with tab3:
         st.subheader("📈 Prédictions vs Prix Réels")
         
         # Time series
@@ -623,8 +826,8 @@ try:
             fig_errors.update_traces(marker_color='#f97316')
             st.plotly_chart(fig_errors, use_container_width=True)
     
-    # TAB 3: PRÉVISIONS FUTURES
-    with tab3:
+    # TAB 4: PRÉVISIONS FUTURES
+    with tab4:
         st.subheader("🔮 Prévisions Prix 48h")
         
         st.info("🚀 **Nouveau!** Prédictions des prix pour les prochaines 48 heures basées sur prévisions météo")
@@ -793,8 +996,8 @@ try:
             st.error(f"❌ Erreur lors des prédictions futures: {e}")
             st.info("💡 Cette fonctionnalité nécessite les données historiques et les prévisions météo.")
     
-    # TAB 4: MÉTÉO
-    with tab4:
+    # TAB 5: MÉTÉO
+    with tab5:
         st.subheader("🌡️ Impact de la Météo sur les Prix")
         
         col1, col2 = st.columns(2)
@@ -827,8 +1030,8 @@ try:
             )
             st.plotly_chart(fig_wind, use_container_width=True)
     
-    # TAB 5: PRODUCTION
-    with tab5:
+    # TAB 6: PRODUCTION
+    with tab6:
         st.subheader("⚡ Production Électrique par Filière")
         
         # Sélectionner colonnes de production
@@ -883,8 +1086,8 @@ try:
                 
                 st.plotly_chart(fig_hourly, use_container_width=True)
     
-    # TAB 6: ANALYSE
-    with tab6:
+    # TAB 7: ANALYSE
+    with tab7:
         st.subheader("🎯 Feature Importance & Insights")
         
         # Feature importance
