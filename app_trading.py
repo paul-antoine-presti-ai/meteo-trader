@@ -5,6 +5,7 @@ Interface simple et efficace pour traders d'électricité
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import sys
@@ -170,6 +171,60 @@ def load_market_data():
     
     return df
 
+@st.cache_resource
+def train_model(df):
+    """Entraîne le modèle ML sur les données"""
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    
+    # Features temporelles
+    df['hour'] = df['timestamp'].dt.hour
+    df['day_of_week'] = df['timestamp'].dt.dayofweek
+    df['month'] = df['timestamp'].dt.month
+    df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
+    df['is_peak_hour'] = ((df['hour'] >= 18) & (df['hour'] <= 20)).astype(int)
+    
+    # Features température
+    if 'temperature_c' in df.columns:
+        df['temp_extreme'] = ((df['temperature_c'] < 5) | (df['temperature_c'] > 25)).astype(int)
+    
+    # Production renouvelable
+    prod_cols = [c for c in df.columns if 'production_gw' in c and c != 'total_production_gw']
+    if prod_cols:
+        renewable_cols = [c for c in prod_cols if 'wind' in c.lower() or 'solar' in c.lower()]
+        if renewable_cols:
+            df['renewable_production_gw'] = df[renewable_cols].sum(axis=1)
+            df['renewable_share'] = df['renewable_production_gw'] / df['total_production_gw'].replace(0, np.nan)
+            df['renewable_share'] = df['renewable_share'].fillna(0)
+    
+    # Gap production-demande
+    if 'demand_gw' in df.columns and 'total_production_gw' in df.columns:
+        df['production_demand_gap'] = df['demand_gw'] - df['total_production_gw']
+    
+    # Sélectionner features
+    feature_columns = [
+        'temperature_c', 'wind_speed_kmh', 'solar_radiation_wm2',
+        'nuclear_production_gw', 'total_production_gw', 'demand_gw',
+        'hour', 'day_of_week', 'month', 'is_weekend', 'is_peak_hour',
+        'temp_extreme', 'renewable_share', 'production_demand_gap'
+    ]
+    feature_columns = [f for f in feature_columns if f in df.columns]
+    
+    # Préparer données
+    X = df[feature_columns].fillna(0)
+    y = df['price_eur_mwh']
+    
+    # Split
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+    
+    # Entraîner
+    model = RandomForestRegressor(n_estimators=100, max_depth=15, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
+    
+    return model, feature_columns, df
+
 def get_current_price(df):
     """Récupère prix actuel (ou dernier disponible)"""
     if df.empty:
@@ -180,31 +235,81 @@ def get_current_price(df):
         return float(recent.iloc[0]['price_eur_mwh'])
     return 75.0
 
-def get_future_predictions(db):
-    """Récupère prédictions futures depuis DB"""
+def get_future_predictions(model, feature_columns, df_full):
+    """Génère prédictions futures 48h"""
+    import requests
+    
     try:
-        from src.models.predict_future import predict_future_prices
-        from sklearn.ensemble import RandomForestRegressor
-        import joblib
+        # 1. Récupérer prévisions météo futures
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            'latitude': 48.8566,
+            'longitude': 2.3522,
+            'hourly': 'temperature_2m,windspeed_10m,shortwave_radiation',
+            'forecast_days': 2,
+            'timezone': 'Europe/Paris'
+        }
         
-        # Charger modèle (ou créer un simple si pas dispo)
-        model_path = 'models/price_model.pkl'
-        if os.path.exists(model_path):
-            model = joblib.load(model_path)
-        else:
-            # Modèle simple par défaut
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
+        response = requests.get(url, params=params, timeout=30)
         
-        predictions = predict_future_prices(model, hours=48)
-        return predictions
+        if response.status_code != 200:
+            raise Exception("Erreur météo API")
+        
+        data = response.json()
+        hourly = data.get('hourly', {})
+        
+        forecast_df = pd.DataFrame({
+            'timestamp': pd.to_datetime(hourly['time']),
+            'temperature_c': hourly['temperature_2m'],
+            'wind_speed_kmh': hourly['windspeed_10m'],
+            'solar_radiation_wm2': hourly['shortwave_radiation']
+        })
+        
+        # 2. Estimer production/demande futures basées sur patterns historiques
+        recent = df_full.tail(168)  # 7 derniers jours
+        
+        # Moyennes par heure
+        hourly_patterns = recent.groupby('hour').agg({
+            'nuclear_production_gw': 'mean',
+            'total_production_gw': 'mean',
+            'demand_gw': 'mean'
+        }).to_dict()
+        
+        # Appliquer patterns
+        forecast_df['hour'] = forecast_df['timestamp'].dt.hour
+        forecast_df['day_of_week'] = forecast_df['timestamp'].dt.dayofweek
+        forecast_df['month'] = forecast_df['timestamp'].dt.month
+        forecast_df['is_weekend'] = (forecast_df['day_of_week'] >= 5).astype(int)
+        forecast_df['is_peak_hour'] = ((forecast_df['hour'] >= 18) & (forecast_df['hour'] <= 20)).astype(int)
+        
+        forecast_df['nuclear_production_gw'] = forecast_df['hour'].map(hourly_patterns['nuclear_production_gw'])
+        forecast_df['total_production_gw'] = forecast_df['hour'].map(hourly_patterns['total_production_gw'])
+        forecast_df['demand_gw'] = forecast_df['hour'].map(hourly_patterns['demand_gw'])
+        
+        # Features additionnelles
+        forecast_df['temp_extreme'] = ((forecast_df['temperature_c'] < 5) | (forecast_df['temperature_c'] > 25)).astype(int)
+        forecast_df['renewable_share'] = 0.2  # Estimation
+        forecast_df['production_demand_gap'] = forecast_df['demand_gw'] - forecast_df['total_production_gw']
+        
+        # 3. Prédire prix
+        X_future = forecast_df[feature_columns].fillna(0)
+        predicted_prices = model.predict(X_future)
+        
+        # Intervalle de confiance (±10%)
+        forecast_df['predicted_price'] = predicted_prices
+        forecast_df['confidence_lower'] = predicted_prices * 0.9
+        forecast_df['confidence_upper'] = predicted_prices * 1.1
+        
+        return forecast_df[['timestamp', 'predicted_price', 'confidence_lower', 'confidence_upper']]
+        
     except Exception as e:
-        st.warning(f"Prédictions non disponibles: {e}")
-        # Retourner prédictions simulées
+        st.warning(f"⚠️ Prédictions futures: {e}")
+        # Fallback
         return pd.DataFrame({
             'timestamp': pd.date_range(start=datetime.now(), periods=48, freq='h'),
-            'predicted_price': [75 + i * 0.3 for i in range(48)],
-            'confidence_lower': [70 + i * 0.3 for i in range(48)],
-            'confidence_upper': [80 + i * 0.3 for i in range(48)]
+            'predicted_price': [75] * 48,
+            'confidence_lower': [70] * 48,
+            'confidence_upper': [80] * 48
         })
 
 def generate_recommendation(db, current_price, predictions):
@@ -245,7 +350,7 @@ def main():
     with col1:
         st.title("⚡ MétéoTrader Pro")
     with col2:
-        st.metric("", f"{datetime.now().strftime('%H:%M')}", label="Heure")
+        st.metric("Heure", f"{datetime.now().strftime('%H:%M')}")
     
     # Initialiser
     db = init_database()
@@ -253,14 +358,25 @@ def main():
     # Charger données
     try:
         df = load_market_data()
-        current_price = get_current_price(df)
+        
+        if df.empty:
+            st.error("❌ Pas de données disponibles")
+            return
+        
+        # Entraîner modèle
+        with st.spinner('🤖 Entraînement du modèle...'):
+            model, feature_columns, df_full = train_model(df)
+        
+        current_price = get_current_price(df_full)
+        
+        # Générer prédictions futures
+        predictions = get_future_predictions(model, feature_columns, df_full)
+        
     except Exception as e:
-        st.error(f"Erreur chargement données: {e}")
-        current_price = 75.0
-        df = pd.DataFrame()
-    
-    # Obtenir prédictions
-    predictions = get_future_predictions(db)
+        st.error(f"❌ Erreur: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return
     
     # Générer recommandation
     reco = generate_recommendation(db, current_price, predictions)
@@ -465,8 +581,8 @@ def main():
         fig = go.Figure()
         
         # Prix actuels (si disponibles)
-        if not df.empty:
-            historical = df[df['timestamp'] <= datetime.now()].tail(72)
+        if not df_full.empty:
+            historical = df_full[df_full['timestamp'] <= datetime.now()].tail(72)
             fig.add_trace(go.Scatter(
                 x=historical['timestamp'],
                 y=historical['price_eur_mwh'],
