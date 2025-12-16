@@ -629,35 +629,53 @@ def page_france(df_france, model, features):
             col1, col2 = st.columns(2)
             
             with col1:
-                import plotly.express as px
-                fig_temp = px.scatter(
-                    df_france,
-                    x='temperature_c',
-                    y='price_eur_mwh',
-                    color='hour',
-                    title="🌡️ Température vs Prix",
-                    labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                    template='plotly_dark',
-                    trendline='ols',
-                    color_continuous_scale='Oranges'
-                )
-                fig_temp.update_layout(paper_bgcolor='#0c0c0c', height=400)
-                st.plotly_chart(fig_temp, use_container_width=True)
+                # Vérifier colonnes nécessaires
+                if all(col in df_france.columns for col in ['temperature_c', 'price_eur_mwh']):
+                    # Ajouter colonne hour si manquante
+                    df_plot = df_france.copy()
+                    if 'hour' not in df_plot.columns and 'timestamp' in df_plot.columns:
+                        df_plot['hour'] = df_plot['timestamp'].dt.hour
+                    
+                    import plotly.express as px
+                    fig_temp = px.scatter(
+                        df_plot,
+                        x='temperature_c',
+                        y='price_eur_mwh',
+                        color='hour' if 'hour' in df_plot.columns else None,
+                        title="🌡️ Température vs Prix",
+                        labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                        template='plotly_dark',
+                        trendline='ols',
+                        color_continuous_scale='Oranges'
+                    )
+                    fig_temp.update_layout(paper_bgcolor='#0c0c0c', height=400)
+                    st.plotly_chart(fig_temp, use_container_width=True)
+                else:
+                    st.info("📊 Données température non disponibles")
             
             with col2:
-                fig_wind = px.scatter(
-                    df_france,
-                    x='wind_speed_kmh',
-                    y='price_eur_mwh',
-                    color='hour',
-                    title="💨 Vent vs Prix",
-                    labels={'wind_speed_kmh': 'Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                    template='plotly_dark',
-                    trendline='ols',
-                    color_continuous_scale='Blues'
-                )
-                fig_wind.update_layout(paper_bgcolor='#0c0c0c', height=400)
-                st.plotly_chart(fig_wind, use_container_width=True)
+                # Vérifier colonnes nécessaires
+                if all(col in df_france.columns for col in ['wind_speed_kmh', 'price_eur_mwh']):
+                    # Ajouter colonne hour si manquante
+                    df_plot = df_france.copy()
+                    if 'hour' not in df_plot.columns and 'timestamp' in df_plot.columns:
+                        df_plot['hour'] = df_plot['timestamp'].dt.hour
+                    
+                    fig_wind = px.scatter(
+                        df_plot,
+                        x='wind_speed_kmh',
+                        y='price_eur_mwh',
+                        color='hour' if 'hour' in df_plot.columns else None,
+                        title="💨 Vent vs Prix",
+                        labels={'wind_speed_kmh': 'Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                        template='plotly_dark',
+                        trendline='ols',
+                        color_continuous_scale='Blues'
+                    )
+                    fig_wind.update_layout(paper_bgcolor='#0c0c0c', height=400)
+                    st.plotly_chart(fig_wind, use_container_width=True)
+                else:
+                    st.info("📊 Données vent non disponibles")
         else:
             st.warning("⚠️ Données météo non disponibles")
     
