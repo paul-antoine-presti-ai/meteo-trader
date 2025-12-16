@@ -686,153 +686,45 @@ def page_france(df_france, model, features):
     tab1, tab2, tab3 = st.tabs(["📊 Production Mix", "🌡️ Météo", "📈 Prédictions"])
     
     with tab1:
-        # Copie de travail (éviter UnboundLocalError si merge ENTSOE-E)
-        df_work = df_france.copy()
-        
         st.markdown("### Mix Énergétique France")
-        st.caption("📊 **Répartition de la production électrique en temps réel** : Visualisation du mix par source (nucléaire, hydraulique, éolien, solaire, fossile). Données mises à jour chaque heure via l'API RTE.")
+        st.caption("📊 Production électrique en temps réel")
         
-        # Production par type
-        prod_cols = [c for c in df_france.columns if 'production_gw' in c and c not in ['total_production_gw', 'total_rte_production_gw']]
+        # Colonnes de production
+        prod_cols = [c for c in df_france.columns if 'production_gw' in c.lower()]
         
-        # FALLBACK: Utiliser ENTSOE-E si RTE ne fournit pas les données
-        if not prod_cols or len(prod_cols) == 0:
-            st.warning("⚠️ Données RTE production non disponibles, utilisation ENTSOE-E...")
+        if len(prod_cols) > 0 and len(df_france) > 0:
+            latest = df_france.iloc[-1]
             
-            # Charger données ENTSOE-E France
-            try:
-                import sys
-                sys.path.append('.')
-                from src.data.entsoe_api import EntsoeClient
-                from datetime import datetime, timedelta
-                
-                client = EntsoeClient()
-                end_date = datetime.now().date()
-                start_date = end_date - timedelta(days=1)
-                
-                with st.spinner("📊 Chargement production ENTSOE-E..."):
-                    prod_df = client.get_actual_generation('FR', str(start_date), str(end_date))
-                
-                if not prod_df.empty and 'timestamp' in prod_df.columns:
-                    # Merger avec df_france
-                    df_work = pd.merge(df_france, prod_df, on='timestamp', how='left', suffixes=('', '_entsoe'))
-                    prod_cols = [c for c in df_work.columns if 'production_gw' in c.lower() and c not in ['total_production_gw', 'total_rte_production_gw']]
-                    st.success(f"✅ {len(prod_cols)} sources d'énergie chargées depuis ENTSOE-E")
-                else:
-                    st.error("❌ Impossible de charger les données de production")
-                    prod_cols = []
-            except Exception as e:
-                st.error(f"❌ Erreur chargement ENTSOE-E: {e}")
-                prod_cols = []
-        
-        # Affichage si données disponibles
-        if prod_cols and len(prod_cols) > 0 and len(df_work) > 0:
-            latest = df_work.iloc[-1]
+            # Valeurs (avec fallback à 0)
+            nuclear = latest.get('nuclear_production_gw', 0)
+            wind = sum([latest.get(c, 0) for c in prod_cols if 'wind' in c.lower()])
+            solar = latest.get('solar_production_gw', 0)
+            hydro = sum([latest.get(c, 0) for c in prod_cols if 'hydro' in c.lower()])
+            total = nuclear + wind + solar + hydro
             
-            # Calculer totaux par catégorie
-            nuclear = latest.get('nuclear_production_gw', latest.get('Nuclear_production_gw', 0))
-            hydro_cols = [c for c in prod_cols if 'hydro' in c.lower()]
-            hydro = sum([latest.get(c, 0) for c in hydro_cols])
-            wind_cols = [c for c in prod_cols if 'wind' in c.lower()]
-            wind = sum([latest.get(c, 0) for c in wind_cols])
-            solar = latest.get('solar_production_gw', latest.get('Solar_production_gw', 0))
-            fossil_cols = [c for c in prod_cols if any(f in c.lower() for f in ['gas', 'coal', 'oil', 'fossil'])]
-            fossil = sum([latest.get(c, 0) for c in fossil_cols])
-            other_cols = [c for c in prod_cols if any(o in c.lower() for o in ['biomass', 'waste', 'other'])]
-            other = sum([latest.get(c, 0) for c in other_cols])
-            total_prod = nuclear + hydro + wind + solar + fossil + other
-            
-            # Métriques
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                pct = (nuclear / total_prod * 100) if total_prod > 0 else 0
-                st.metric("⚛️ Nucléaire", f"{nuclear:.2f} GW", f"{pct:.1f}%")
-            with col2:
-                pct = (hydro / total_prod * 100) if total_prod > 0 else 0
-                st.metric("💧 Hydraulique", f"{hydro:.2f} GW", f"{pct:.1f}%")
-            with col3:
-                pct = (wind / total_prod * 100) if total_prod > 0 else 0
-                st.metric("🌬️ Éolien", f"{wind:.2f} GW", f"{pct:.1f}%")
-            with col4:
-                pct = (solar / total_prod * 100) if total_prod > 0 else 0
-                st.metric("☀️ Solaire", f"{solar:.2f} GW", f"{pct:.1f}%")
-            with col5:
-                st.metric("⚡ TOTAL", f"{total_prod:.2f} GW")
-            
-            st.markdown("---")
-            
-            # Graphiques
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("### 🥧 Mix Énergétique Actuel")
-                mix_data = pd.DataFrame({
-                    'Source': ['⚛️ Nucléaire', '💧 Hydraulique', '🌬️ Éolien', '☀️ Solaire', '🏭 Fossile', '♻️ Autre'],
-                    'Production': [nuclear, hydro, wind, solar, fossil, other]
-                })
-                mix_data = mix_data[mix_data['Production'] > 0]
+            if total > 0:
+                # Métriques
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("⚛️ Nucléaire", f"{nuclear:.1f} GW")
+                col2.metric("🌬️ Éolien", f"{wind:.1f} GW")
+                col3.metric("☀️ Solaire", f"{solar:.1f} GW")
+                col4.metric("💧 Hydraulique", f"{hydro:.1f} GW")
                 
-                fig_pie = px.pie(
-                    mix_data,
-                    values='Production',
-                    names='Source',
-                    title=f"Mix Énergétique - {latest['timestamp'].strftime('%d/%m/%Y %H:%M')}",
-                    template='plotly_dark',
-                    color_discrete_sequence=px.colors.sequential.Oranges_r
-                )
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(height=400, paper_bgcolor='#0c0c0c', plot_bgcolor='#161616')
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col2:
-                st.markdown("### 📊 Évolution 24h")
-                last_24h = df_work.tail(24)
-                fig_evolution = go.Figure()
+                # Graphique simple
+                import plotly.express as px
+                data = {'Source': ['Nucléaire', 'Éolien', 'Solaire', 'Hydraulique'],
+                        'Production': [nuclear, wind, solar, hydro]}
+                df_mix = pd.DataFrame(data)
+                df_mix = df_mix[df_mix['Production'] > 0]
                 
-                if nuclear > 0:
-                    fig_evolution.add_trace(go.Scatter(
-                        x=last_24h['timestamp'],
-                        y=last_24h.get('nuclear_production_gw', last_24h.get('Nuclear_production_gw', 0)),
-                        name='⚛️ Nucléaire',
-                        line=dict(color='#ff6b35', width=2)
-                    ))
-                
-                if wind > 0:
-                    wind_24h = last_24h[[c for c in wind_cols if c in last_24h.columns]].sum(axis=1) if wind_cols else 0
-                    fig_evolution.add_trace(go.Scatter(
-                        x=last_24h['timestamp'],
-                        y=wind_24h,
-                        name='🌬️ Éolien',
-                        line=dict(color='#3b82f6', width=2)
-                    ))
-                
-                if solar > 0:
-                    fig_evolution.add_trace(go.Scatter(
-                        x=last_24h['timestamp'],
-                        y=last_24h.get('solar_production_gw', last_24h.get('Solar_production_gw', 0)),
-                        name='☀️ Solaire',
-                        line=dict(color='#fbbf24', width=2)
-                    ))
-                
-                fig_evolution.update_layout(
-                    template='plotly_dark',
-                    paper_bgcolor='#0c0c0c',
-                    plot_bgcolor='#161616',
-                    height=400,
-                    xaxis_title="Heure",
-                    yaxis_title="Production (GW)",
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_evolution, use_container_width=True)
-        
+                fig = px.pie(df_mix, values='Production', names='Source', 
+                            title="Mix Énergétique Actuel",
+                            template='plotly_dark')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Pas de données de production disponibles")
         else:
-            st.warning("⚠️ Données de production détaillées non disponibles actuellement")
-            st.info("""
-            💡 **Pourquoi ?**
-            - Les données RTE peuvent avoir un délai de publication
-            - L'API ENTSOE-E peut être temporairement indisponible
-            - Le mix énergétique sera disponible dès que les données seront mises à jour
-            """)
+            st.info("Données de production en cours de chargement...")
 
     with tab2:
         st.markdown("### Données Météo & Impact Prix")
