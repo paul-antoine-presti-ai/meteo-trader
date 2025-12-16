@@ -46,26 +46,138 @@ def load_custom_css():
 
 load_custom_css()
 
-# CSS Custom (dark mode élégant)
+# CSS DESIGN CURSOR (COMPLET & ÉPURÉ)
 st.markdown("""
 <style>
+    /* Cursor-like Dark Theme */
+    :root {
+        --bg-primary: #0c0c0c;
+        --bg-secondary: #161616;
+        --bg-tertiary: #1e1e1e;
+        --text-primary: #e3e3e3;
+        --text-secondary: #a0a0a0;
+        --accent-orange: #ff6b35;
+        --border-subtle: #2a2a2a;
+        --hover-bg: #252525;
+    }
+    
+    /* Global */
     .main {
-        background-color: #0e1117;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
     }
-    .stMetric {
-        background-color: #1e2130;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #f97316;
+    
+    /* Sidebar Cursor-style */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f0f0f 0%, #1a1a1a 100%);
+        border-right: 1px solid var(--border-subtle);
     }
-    .metric-label {
-        color: #f97316 !important;
+    
+    /* Typography Cursor-like */
+    h1, h2, h3, h4 {
+        color: var(--text-primary);
+        font-weight: 300;
+        letter-spacing: -0.02em;
     }
+    
     h1 {
-        color: #f97316;
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+        background: linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
     }
-    h2, h3 {
-        color: #ffffff;
+    
+    h2 {
+        font-size: 1.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Metrics Cursor-style */
+    .stMetric {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 16px;
+        transition: all 0.2s ease;
+    }
+    
+    .stMetric:hover {
+        background: var(--hover-bg);
+        border-color: var(--accent-orange);
+    }
+    
+    .stMetric label {
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .stMetric [data-testid="stMetricValue"] {
+        color: var(--text-primary);
+        font-size: 1.75rem;
+        font-weight: 300;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8c61 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 10px 20px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(255, 107, 53, 0.3);
+    }
+    
+    /* Tabs Cursor-style */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: var(--bg-secondary);
+        border-radius: 8px;
+        padding: 4px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background-color: transparent;
+        border-radius: 6px;
+        color: var(--text-secondary);
+        padding: 8px 16px;
+        font-weight: 400;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: var(--accent-orange);
+        color: white;
+    }
+    
+    /* Dataframes */
+    .dataframe {
+        background-color: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: var(--border-subtle);
+        margin: 2rem 0;
+    }
+    
+    /* Info/Warning/Success boxes */
+    .stAlert {
+        background-color: var(--bg-secondary);
+        border-left: 3px solid var(--accent-orange);
+        border-radius: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
