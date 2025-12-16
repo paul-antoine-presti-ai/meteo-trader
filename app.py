@@ -240,7 +240,16 @@ try:
     # ==========================================
     
     # Tabs pour navigation
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["⏱️ Timeline Live", "🗺️ Carte Europe", "📈 Prédictions", "🔮 Prévisions 48h", "🌡️ Impact Météo", "⚡ Production", "🎯 Analyse"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "⏱️ Timeline Live", 
+        "📊 Trading Signals",  # NOUVEAU!
+        "🗺️ Carte Europe", 
+        "📈 Prédictions", 
+        "🔮 Prévisions 48h", 
+        "🌡️ Impact Météo", 
+        "⚡ Production", 
+        "🎯 Analyse"
+    ])
     
     # TAB 1: TIMELINE UNIFIÉE (NOUVEAU!)
     with tab1:
@@ -648,8 +657,314 @@ try:
         else:
             st.warning("⚠️ Timeline vide. Les données seront disponibles après quelques heures d'utilisation.")
     
-    # TAB 2: CARTE EUROPÉENNE
+    # TAB 2: TRADING SIGNALS (NOUVEAU!)
     with tab2:
+        st.subheader("📊 Signaux de Trading Professionnels")
+        
+        st.info("🎯 **Recommandations actionnables** basées sur prix actuels, prédictions et analyse du marché européen")
+        
+        try:
+            from src.trading.signals import TradingSignals
+            
+            # Initialiser générateur de signaux
+            signals = TradingSignals(
+                low_threshold=60.0,
+                high_threshold=90.0,
+                volatility_threshold=15.0
+            )
+            
+            # Récupérer données nécessaires
+            timeline = db.get_unified_timeline(lookback_hours=72, lookahead_hours=48)
+            
+            if not timeline.empty:
+                # Prix actuel (dernier prix réel)
+                now = pd.Timestamp.now()
+                past_data = timeline[timeline['is_future'] == False]
+                future_data = timeline[timeline['is_future'] == True]
+                
+                if not past_data.empty:
+                    current_price = past_data['actual_price'].iloc[-1]
+                else:
+                    current_price = df_full['price_eur_mwh'].iloc[-1]
+                
+                # Prédictions futures
+                predicted_prices = future_data['predicted_price'].dropna() if not future_data.empty else pd.Series()
+                
+                # Moyenne historique
+                historical_avg = past_data['actual_price'].mean() if not past_data.empty else df_full['price_eur_mwh'].mean()
+                
+                # Volatilité (écart-type sur 24h)
+                if not past_data.empty:
+                    recent_prices = past_data.tail(24)['actual_price']
+                    volatility = (recent_prices.std() / recent_prices.mean()) * 100
+                else:
+                    volatility = 10.0  # Default
+                
+                # CALCUL SCORE DE TRADING
+                trading_score = signals.calculate_trading_score(
+                    current_price=current_price,
+                    predicted_prices=predicted_prices,
+                    historical_avg=historical_avg,
+                    volatility=volatility
+                )
+                
+                # RECOMMANDATION
+                action, label, color = signals.get_recommendation(trading_score, current_price, predicted_prices)
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 1: SIGNAL PRINCIPAL
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🎯 Signal Trading - MAINTENANT")
+                
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.metric(
+                        label="💰 Prix Actuel",
+                        value=f"{current_price:.2f} €/MWh",
+                        delta=f"{((current_price - historical_avg) / historical_avg * 100):.1f}% vs moyenne"
+                    )
+                
+                with col2:
+                    # Score avec couleur
+                    if trading_score >= 75:
+                        score_color = "🟢"
+                    elif trading_score >= 60:
+                        score_color = "🟡"
+                    elif trading_score >= 40:
+                        score_color = "⚪"
+                    else:
+                        score_color = "🔴"
+                    
+                    st.metric(
+                        label="📊 Score de Trading",
+                        value=f"{trading_score}/100 {score_color}",
+                        help="Score basé sur prix, tendance, volatilité"
+                    )
+                
+                with col3:
+                    # Recommandation avec styling
+                    if action == 'BUY':
+                        st.success(f"### {label}")
+                    elif action == 'SELL':
+                        st.error(f"### {label}")
+                    elif action == 'HOLD':
+                        st.warning(f"### {label}")
+                    else:
+                        st.info(f"### {label}")
+                
+                # Explications détaillées
+                st.markdown("#### 📋 Analyse Détaillée")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**📌 Raisons de la recommandation:**")
+                    
+                    # Prix vs moyenne
+                    price_diff = ((current_price - historical_avg) / historical_avg) * 100
+                    if price_diff < -10:
+                        st.markdown(f"✅ Prix **{abs(price_diff):.1f}% sous** la moyenne → Bon marché")
+                    elif price_diff > 10:
+                        st.markdown(f"❌ Prix **{price_diff:.1f}% au-dessus** de la moyenne → Cher")
+                    else:
+                        st.markdown(f"ℹ️ Prix proche de la moyenne ({price_diff:+.1f}%)")
+                    
+                    # Tendance future
+                    if not predicted_prices.empty:
+                        future_avg = predicted_prices.mean()
+                        trend = ((future_avg - current_price) / current_price) * 100
+                        
+                        if trend > 5:
+                            st.markdown(f"✅ Prévision **hausse {trend:.1f}%** → Acheter maintenant")
+                        elif trend < -5:
+                            st.markdown(f"⚠️ Prévision **baisse {abs(trend):.1f}%** → Attendre ou vendre")
+                        else:
+                            st.markdown(f"ℹ️ Prix stable prévu ({trend:+.1f}%)")
+                    
+                    # Volatilité
+                    if volatility > 15:
+                        st.markdown(f"⚠️ Volatilité **élevée** ({volatility:.1f}%) → Risque accru")
+                    elif volatility < 5:
+                        st.markdown(f"✅ Marché **stable** ({volatility:.1f}%) → Peu de risque")
+                    else:
+                        st.markdown(f"ℹ️ Volatilité normale ({volatility:.1f}%)")
+                
+                with col2:
+                    st.markdown("**💡 Actions Suggérées:**")
+                    
+                    if action == 'BUY':
+                        st.markdown("""
+                        - ✅ **Acheter maintenant** si besoin électricité
+                        - ✅ Verrouiller contrats spot
+                        - ✅ Reporter consommation différable
+                        - ⏰ Profiter prix bas
+                        """)
+                    elif action == 'SELL':
+                        st.markdown("""
+                        - ✅ **Vendre excédent** si possible
+                        - ✅ Reporter achats non urgents
+                        - ⏰ Attendre baisse prévue
+                        - 📉 Éviter achats spot
+                        """)
+                    elif action == 'HOLD':
+                        st.markdown("""
+                        - ✅ **Maintenir positions** actuelles
+                        - ✅ Prix raisonnable
+                        - ⏰ Surveiller évolution
+                        - 📊 Pas d'urgence
+                        """)
+                    else:  # WAIT
+                        st.markdown("""
+                        - ⏰ **Attendre** meilleure opportunité
+                        - 📊 Surveiller marché
+                        - 🔮 Opportunité prévue sous peu
+                        - ⚠️ Pas de position pour l'instant
+                        """)
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 2: TOP 5 OPPORTUNITÉS
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("⭐ Top 5 Opportunités (48h)")
+                
+                opportunities = signals.find_best_opportunities(timeline, top_n=5)
+                
+                if not opportunities.empty:
+                    for idx, opp in opportunities.iterrows():
+                        with st.expander(
+                            f"{'🟢' if opp['type'] == 'ACHAT' else '🔴'} {opp['timestamp'].strftime('%d %b %H:%M')} - "
+                            f"{opp['price']:.2f} €/MWh (Score: {opp['score']:.0f}/100)"
+                        ):
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Prix", f"{opp['price']:.2f} €/MWh")
+                            with col2:
+                                st.metric("Type", opp['type'])
+                            with col3:
+                                st.metric("Score", f"{opp['score']:.0f}/100")
+                            
+                            if opp['type'] == 'ACHAT':
+                                st.success(f"💡 Bon moment pour **acheter** - Prix {abs(current_price - opp['price']):.2f}€ sous prix actuel")
+                            else:
+                                st.error(f"💡 Bon moment pour **vendre** - Prix {abs(opp['price'] - current_price):.2f}€ au-dessus prix actuel")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 3: HEURES CREUSES/PLEINES
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("⏰ Heures Optimales (24h)")
+                
+                optimal = signals.get_optimal_hours(timeline, window_hours=24)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### 🟢 Heures Creuses (Achat)")
+                    if optimal['cheapest']:
+                        for hour in optimal['cheapest']:
+                            st.markdown(
+                                f"- **{hour['timestamp'].strftime('%d %b %H:%M')}** "
+                                f"→ {hour['price']:.2f} €/MWh"
+                            )
+                        
+                        if 'savings_pct' in optimal:
+                            st.success(f"💰 Économies potentielles: **{optimal['savings_pct']:.1f}%**")
+                    else:
+                        st.info("Pas encore de données futures")
+                
+                with col2:
+                    st.markdown("#### 🔴 Heures Pleines (Vente)")
+                    if optimal['most_expensive']:
+                        for hour in optimal['most_expensive']:
+                            st.markdown(
+                                f"- **{hour['timestamp'].strftime('%d %b %H:%M')}** "
+                                f"→ {hour['price']:.2f} €/MWh"
+                            )
+                        
+                        if 'max_price' in optimal and 'min_price' in optimal:
+                            spread = optimal['max_price'] - optimal['min_price']
+                            st.error(f"📊 Écart max: **{spread:.2f} €/MWh**")
+                    else:
+                        st.info("Pas encore de données futures")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 4: ALERTES
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🔔 Alertes Actives")
+                
+                alerts = signals.detect_alerts(current_price, predicted_prices, volatility)
+                
+                if alerts:
+                    for alert in alerts:
+                        if alert['severity'] == 'success':
+                            st.success(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        elif alert['severity'] == 'error':
+                            st.error(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        elif alert['severity'] == 'warning':
+                            st.warning(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        else:
+                            st.info(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                else:
+                    st.info("✅ Pas d'alerte active - Marché normal")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 5: SPREAD ARBITRAGE EUROPE
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🌍 Opportunités d'Arbitrage Europe")
+                
+                try:
+                    from src.data.fetch_europe_prices import get_european_prices
+                    
+                    europe_df = get_european_prices()
+                    europe_prices = dict(zip(europe_df['country_code'], europe_df['price_eur_mwh']))
+                    
+                    arbitrage_opps = signals.calculate_arbitrage_spread(current_price, europe_prices)
+                    
+                    if arbitrage_opps:
+                        st.caption(f"💡 Spread = différence de prix entre France et autre pays. Spread élevé = opportunité d'arbitrage!")
+                        
+                        for opp in arbitrage_opps[:5]:  # Top 5
+                            country_name = europe_df[europe_df['country_code'] == opp['country']]['country_name'].values[0]
+                            
+                            if opp['opportunity']:
+                                with st.expander(
+                                    f"{'🟢' if opp['direction'] == 'IMPORT' else '🔴'} {country_name} - "
+                                    f"Spread: {abs(opp['spread']):.2f} €/MWh ({abs(opp['spread_pct']):.1f}%)"
+                                ):
+                                    col1, col2, col3 = st.columns(3)
+                                    
+                                    with col1:
+                                        st.metric("Prix", f"{opp['price']:.2f} €/MWh")
+                                    with col2:
+                                        st.metric("Spread", f"{opp['spread']:+.2f} €/MWh")
+                                    with col3:
+                                        st.metric("Direction", opp['direction'])
+                                    
+                                    if opp['direction'] == 'IMPORT':
+                                        st.success(f"💡 **Importer** de {country_name} vers France (prix {abs(opp['spread']):.2f}€ moins cher)")
+                                    else:
+                                        st.error(f"💡 **Exporter** de France vers {country_name} (prix {abs(opp['spread']):.2f}€ plus cher)")
+                    else:
+                        st.info("Pas d'opportunités d'arbitrage significatives actuellement")
+                
+                except Exception as e:
+                    st.warning(f"⚠️ Données Europe indisponibles: {str(e)}")
+            
+            else:
+                st.warning("⚠️ Pas de données timeline disponibles")
+        
+        except Exception as e:
+            st.error(f"❌ Erreur module trading: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # TAB 3: CARTE EUROPÉENNE
+    with tab3:
         st.subheader("🗺️ Prix de l'Électricité en Europe")
         
         st.info("📊 Visualisation des prix spot sur le marché européen interconnecté (comme RTE éCO2mix)")
@@ -839,8 +1154,8 @@ try:
             import traceback
             st.code(traceback.format_exc())
     
-    # TAB 3: PRÉDICTIONS
-    with tab3:
+    # TAB 4: PRÉDICTIONS
+    with tab4:
         st.subheader("📈 Prédictions vs Prix Réels")
         
         # Time series
@@ -910,8 +1225,8 @@ try:
             fig_errors.update_traces(marker_color='#f97316')
             st.plotly_chart(fig_errors, use_container_width=True)
     
-    # TAB 4: PRÉVISIONS FUTURES
-    with tab4:
+    # TAB 5: PRÉVISIONS FUTURES
+    with tab5:
         st.subheader("🔮 Prévisions Prix 48h")
         
         st.info("🚀 **Nouveau!** Prédictions des prix pour les prochaines 48 heures basées sur prévisions météo")
@@ -1080,8 +1395,8 @@ try:
             st.error(f"❌ Erreur lors des prédictions futures: {e}")
             st.info("💡 Cette fonctionnalité nécessite les données historiques et les prévisions météo.")
     
-    # TAB 5: MÉTÉO
-    with tab5:
+    # TAB 6: MÉTÉO
+    with tab6:
         st.subheader("🌡️ Impact de la Météo sur les Prix")
         
         col1, col2 = st.columns(2)
@@ -1114,8 +1429,8 @@ try:
             )
             st.plotly_chart(fig_wind, use_container_width=True)
     
-    # TAB 6: PRODUCTION
-    with tab6:
+    # TAB 7: PRODUCTION
+    with tab7:
         st.subheader("⚡ Production Électrique par Filière")
         
         # Sélectionner colonnes de production
@@ -1170,8 +1485,8 @@ try:
                 
                 st.plotly_chart(fig_hourly, use_container_width=True)
     
-    # TAB 7: ANALYSE
-    with tab7:
+    # TAB 8: ANALYSE
+    with tab8:
         st.subheader("🎯 Feature Importance & Insights")
         
         # Feature importance
