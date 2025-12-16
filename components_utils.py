@@ -9,9 +9,27 @@ import pytz
 def display_clock_header():
     """
     Affiche une horloge minimaliste avec fuseau horaire et info de rafraîchissement
+    LIVE: Se met à jour automatiquement avec JavaScript côté client
     """
     paris_tz = pytz.timezone('Europe/Paris')
     now = datetime.now(paris_tz)
+    
+    st.markdown(f"""
+    <script>
+    function updateClock() {{
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        const clockElement = document.getElementById('live-clock');
+        if (clockElement) {{
+            clockElement.textContent = hours + ':' + minutes + ':' + seconds;
+        }}
+    }}
+    setInterval(updateClock, 1000);
+    updateClock();
+    </script>
+    """, unsafe_allow_html=True)
     
     st.markdown(f"""
     <div style="
@@ -26,7 +44,7 @@ def display_clock_header():
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     ">
         <div style="display: flex; align-items: center; gap: 16px;">
-            <div style="
+            <div id="live-clock" style="
                 font-size: 32px;
                 font-weight: 300;
                 color: #ffffff;

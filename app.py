@@ -348,7 +348,8 @@ def show_sidebar():
 def page_overview(df_france, prices_europe, predictions_europe, supply_demand):
     """Vue d'ensemble"""
     st.markdown("# 🏠 Vue d'Ensemble")
-    st.markdown("Tous vos marchés en un coup d'œil")
+    st.markdown("*Vue synthétique des marchés français et européens avec métriques clés en temps réel*")
+    st.divider()
     
     # Métriques principales
     col1, col2, col3, col4 = st.columns(4)
@@ -501,114 +502,253 @@ def page_europe(prices_europe, predictions_europe):
 def page_france(df_france, model, features):
     """Page France détaillée"""
     st.markdown("# 🇫🇷 France Détaillée")
+    st.markdown("*Analyse approfondie du marché français : production, météo, prédictions ML*")
+    st.divider()
     
     # Onglets
     tab1, tab2, tab3 = st.tabs(["📊 Production Mix", "🌡️ Météo", "📈 Prédictions"])
     
     with tab1:
         st.markdown("### Mix Énergétique France")
+        st.caption("📊 Production électrique par type de source en temps réel (données RTE)")
         
         # Production par type
-        prod_cols = [c for c in df_france.columns if 'production_gw' in c and c != 'total_production_gw']
+        prod_cols = [c for c in df_france.columns if 'production_gw' in c and c not in ['total_production_gw', 'total_rte_production_gw']]
         
-        if prod_cols:
+        if prod_cols and len(prod_cols) > 0:
             latest = df_france.iloc[-1]
             
-            fig = go.Figure(data=[go.Pie(
-                labels=[c.replace('_production_gw', '').upper() for c in prod_cols],
-                values=[latest[c] for c in prod_cols],
-                hole=0.4
-            )])
+            # Calculer totaux par catégorie
+            nuclear = latest.get('nuclear_production_gw', 0)
+            hydro = sum([latest.get(c, 0) for c in prod_cols if 'hydro' in c])
+            wind = sum([latest.get(c, 0) for c in prod_cols if 'wind' in c])
+            solar = latest.get('solar_production_gw', 0)
+            fossil = sum([latest.get(c, 0) for c in prod_cols if any(f in c for f in ['gas', 'coal', 'oil'])])
+            other = sum([latest.get(c, 0) for c in prod_cols if any(o in c for o in ['biomass', 'waste'])])
             
-            fig.update_layout(
-                template='plotly_dark',
-                paper_bgcolor='#0c0c0c',
-                height=400
-            )
+            total_prod = nuclear + hydro + wind + solar + fossil + other
             
-            st.plotly_chart(fig, use_container_width=True)
+            # Métriques principales
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                pct = (nuclear / total_prod * 100) if total_prod > 0 else 0
+                st.metric("⚛️ Nucléaire", f"{nuclear:.2f} GW", f"{pct:.1f}%")
+            
+            with col2:
+                pct = (hydro / total_prod * 100) if total_prod > 0 else 0
+                st.metric("💧 Hydraulique", f"{hydro:.2f} GW", f"{pct:.1f}%")
+            
+            with col3:
+                pct = (wind / total_prod * 100) if total_prod > 0 else 0
+                st.metric("🌬️ Éolien", f"{wind:.2f} GW", f"{pct:.1f}%")
+            
+            with col4:
+                pct = (solar / total_prod * 100) if total_prod > 0 else 0
+                st.metric("☀️ Solaire", f"{solar:.2f} GW", f"{pct:.1f}%")
+            
+            with col5:
+                st.metric("⚡ TOTAL", f"{total_prod:.2f} GW")
+            
+            st.markdown("---")
+            
+            # Pie chart
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                mix_data = [nuclear, hydro, wind, solar, fossil, other]
+                mix_labels = ['⚛️ Nucléaire', '💧 Hydraulique', '🌬️ Éolien', '☀️ Solaire', '🏭 Fossile', '♻️ Autre']
+                
+                # Filtrer les zéros
+                non_zero_data = [(l, v) for l, v in zip(mix_labels, mix_data) if v > 0]
+                if non_zero_data:
+                    labels, values = zip(*non_zero_data)
+                    
+                    fig = go.Figure(data=[go.Pie(
+                        labels=labels,
+                        values=values,
+                        hole=0.4,
+                        marker=dict(colors=['#ff6b35', '#10b981', '#3b82f6', '#fbbf24', '#94a3b8', '#84cc16'])
+                    )])
+                    
+                    fig.update_layout(
+                        title="Mix Actuel",
+                        template='plotly_dark',
+                        paper_bgcolor='#0c0c0c',
+                        height=400
+                    )
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                renewable = hydro + wind + solar + other
+                non_renewable = nuclear + fossil
+                
+                fig_ren = go.Figure(data=[go.Pie(
+                    labels=['🌱 Renouvelables', '⚛️ Non-Renouvelables'],
+                    values=[renewable, non_renewable],
+                    hole=0.4,
+                    marker=dict(colors=['#10b981', '#ef4444'])
+                )])
+                
+                fig_ren.update_layout(
+                    title="Renouvelables vs Non-Renouvelables",
+                    template='plotly_dark',
+                    paper_bgcolor='#0c0c0c',
+                    height=400
+                )
+                fig_ren.update_traces(textposition='inside', textinfo='percent+label')
+                
+                st.plotly_chart(fig_ren, use_container_width=True)
+        else:
+            st.warning("⚠️ Aucune donnée de production disponible")
     
     with tab2:
-        if 'temperature_c' in df_france.columns:
-            st.markdown("### Données Météo")
+        st.markdown("### Données Météo & Impact Prix")
+        st.caption("🌡️ Corrélations entre conditions météo et prix de l'électricité")
+        
+        if 'temperature_c' in df_france.columns and 'wind_speed_kmh' in df_france.columns:
+            # Métriques actuelles
+            latest = df_france.iloc[-1]
+            col1, col2, col3 = st.columns(3)
             
-            fig = go.Figure()
+            with col1:
+                st.metric("🌡️ Température", f"{latest['temperature_c']:.1f}°C")
             
-            fig.add_trace(go.Scatter(
-                x=df_france['timestamp'],
-                y=df_france['temperature_c'],
-                mode='lines',
-                name='Température',
-                line=dict(color='#f97316')
-            ))
+            with col2:
+                st.metric("💨 Vent", f"{latest['wind_speed_kmh']:.1f} km/h")
             
-            fig.update_layout(
-                template='plotly_dark',
-                paper_bgcolor='#0c0c0c',
-                plot_bgcolor='#161616',
-                height=400
-            )
+            with col3:
+                if 'solar_radiation_wm2' in df_france.columns:
+                    st.metric("☀️ Radiation", f"{latest['solar_radiation_wm2']:.0f} W/m²")
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("---")
+            
+            # Graphiques scatter avec corrélations
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                import plotly.express as px
+                fig_temp = px.scatter(
+                    df_france,
+                    x='temperature_c',
+                    y='price_eur_mwh',
+                    color='hour',
+                    title="🌡️ Température vs Prix",
+                    labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                    template='plotly_dark',
+                    trendline='ols',
+                    color_continuous_scale='Oranges'
+                )
+                fig_temp.update_layout(paper_bgcolor='#0c0c0c', height=400)
+                st.plotly_chart(fig_temp, use_container_width=True)
+            
+            with col2:
+                fig_wind = px.scatter(
+                    df_france,
+                    x='wind_speed_kmh',
+                    y='price_eur_mwh',
+                    color='hour',
+                    title="💨 Vent vs Prix",
+                    labels={'wind_speed_kmh': 'Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                    template='plotly_dark',
+                    trendline='ols',
+                    color_continuous_scale='Blues'
+                )
+                fig_wind.update_layout(paper_bgcolor='#0c0c0c', height=400)
+                st.plotly_chart(fig_wind, use_container_width=True)
+        else:
+            st.warning("⚠️ Données météo non disponibles")
     
     with tab3:
-        st.markdown("### Prédictions 48h")
-        
-        from src.data.fetch_europe import fetch_weather_forecast
+        st.markdown("### Prédictions 48h (ML)")
+        st.caption("🔮 Prévisions des prix basées sur Random Forest + données météo futures")
         
         try:
-            weather_forecast = fetch_weather_forecast('FR', days=2)
+            from src.models.predict_future import predict_future_prices
             
-            if not weather_forecast.empty:
-                # Prédire
-                hourly_patterns = df_france.tail(168).groupby('hour').agg({
-                    'nuclear_production_gw': 'mean',
-                    'total_production_gw': 'mean',
-                    'demand_gw': 'mean'
-                }).to_dict()
-                
-                forecast_df = weather_forecast.copy()
-                forecast_df['hour'] = forecast_df['timestamp'].dt.hour
-                forecast_df['nuclear_production_gw'] = forecast_df['hour'].map(hourly_patterns['nuclear_production_gw'])
-                forecast_df['total_production_gw'] = forecast_df['hour'].map(hourly_patterns['total_production_gw'])
-                forecast_df['demand_gw'] = forecast_df['hour'].map(hourly_patterns['demand_gw'])
-                
-                forecast_df['day_of_week'] = forecast_df['timestamp'].dt.dayofweek
-                forecast_df['month'] = forecast_df['timestamp'].dt.month
-                forecast_df['is_weekend'] = (forecast_df['day_of_week'] >= 5).astype(int)
-                forecast_df['is_peak_hour'] = ((forecast_df['hour'] >= 18) & (forecast_df['hour'] <= 20)).astype(int)
-                forecast_df['temp_extreme'] = ((forecast_df['temperature_c'] < 5) | (forecast_df['temperature_c'] > 25)).astype(int)
-                forecast_df['renewable_share'] = 0.2
-                forecast_df['production_demand_gap'] = forecast_df['demand_gw'] - forecast_df['total_production_gw']
-                
-                X_future = forecast_df[features].fillna(0)
-                predicted_prices = model.predict(X_future)
-                
+            with st.spinner('⏳ Calcul des prédictions...'):
+                future_predictions = predict_future_prices(
+                    model=model,
+                    feature_columns=features,
+                    historical_data=df_france,
+                    days=2
+                )
+            
+            if not future_predictions.empty:
+                # Graphique prédictions
                 fig = go.Figure()
                 
                 fig.add_trace(go.Scatter(
-                    x=forecast_df['timestamp'],
-                    y=predicted_prices,
-                    mode='lines',
+                    x=future_predictions['timestamp'],
+                    y=future_predictions['predicted_price'],
+                    mode='lines+markers',
                     name='Prix Prédit',
-                    line=dict(color='#ff6b35', width=2)
+                    line=dict(color='#ff6b35', width=3),
+                    marker=dict(size=6)
                 ))
                 
+                # Intervalle confiance si disponible
+                if 'confidence_lower' in future_predictions.columns and 'confidence_upper' in future_predictions.columns:
+                    fig.add_trace(go.Scatter(
+                        x=future_predictions['timestamp'].tolist() + future_predictions['timestamp'].tolist()[::-1],
+                        y=future_predictions['confidence_upper'].tolist() + future_predictions['confidence_lower'].tolist()[::-1],
+                        fill='toself',
+                        fillcolor='rgba(249, 115, 22, 0.2)',
+                        line=dict(color='rgba(255,255,255,0)'),
+                        name='Intervalle confiance (95%)',
+                        showlegend=True
+                    ))
+                
                 fig.update_layout(
+                    title="Prévisions Prix Électricité 48h",
+                    xaxis_title="Date/Heure",
+                    yaxis_title="Prix (€/MWh)",
                     template='plotly_dark',
                     paper_bgcolor='#0c0c0c',
                     plot_bgcolor='#161616',
-                    height=400
+                    height=500
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-        except:
-            st.info("Prédictions non disponibles")
+                
+                # Recommandations
+                st.markdown("#### 💡 Recommandations")
+                
+                avg_price = future_predictions['predicted_price'].mean()
+                min_price = future_predictions['predicted_price'].min()
+                max_price = future_predictions['predicted_price'].max()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    min_hour = future_predictions.loc[future_predictions['predicted_price'].idxmin()]
+                    st.success(f"""
+                    **🟢 Meilleur moment (prix bas) :**
+                    - {min_hour['timestamp'].strftime('%d/%m %Hh')} : **{min_price:.2f} €/MWh**
+                    - Économies potentielles : **{max_price - min_price:.2f} €/MWh**
+                    """)
+                
+                with col2:
+                    max_hour = future_predictions.loc[future_predictions['predicted_price'].idxmax()]
+                    st.warning(f"""
+                    **🔴 Heure à éviter (prix élevé) :**
+                    - {max_hour['timestamp'].strftime('%d/%m %Hh')} : **{max_price:.2f} €/MWh**
+                    - Surcoût vs moyenne : **{max_price - avg_price:.2f} €/MWh**
+                    """)
+            else:
+                st.error("Impossible de générer les prédictions")
+        
+        except Exception as e:
+            st.error(f"❌ Erreur prédictions: {e}")
+            st.info("💡 Assurez-vous que les APIs météo sont accessibles")
 
 def page_gap(supply_demand, prices_europe):
     """Page Gap Offre/Demande"""
     st.markdown("# ⚖️ Gap Offre/Demande")
-    st.markdown("Analyse de l'équilibre Production vs Consommation")
+    st.markdown("*Surveillance de l'équilibre entre production et consommation pour anticiper les tensions sur le réseau*")
+    st.divider()
     
     if 'FR' not in supply_demand:
         st.warning("Données gap non disponibles")
