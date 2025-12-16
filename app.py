@@ -453,13 +453,16 @@ def page_overview(df_france, prices_europe, predictions_europe, supply_demand):
     st.caption("📊 **Simulation des gains/pertes** : Si vous aviez suivi les top 10 recommandations du modèle chaque jour sur les 30 derniers jours")
     
     try:
-        # Simuler backtesting (à implémenter avec vraies données plus tard)
+        # Backtesting avec données fixes (démo)
         import numpy as np
         
-        # Générer données simulées de backtesting pour démonstration
+        # Seed fixe pour résultats reproductibles
+        np.random.seed(42)
         dates = pd.date_range(end=pd.Timestamp.now(), periods=30, freq='D')
         daily_pnl = np.random.normal(loc=5, scale=15, size=30)  # PnL moyen +5€ avec volatilité
         cumulative_pnl = np.cumsum(daily_pnl)
+        
+        # Note: Backtesting démo - intégration vraies données en développement
         
         col1, col2, col3, col4 = st.columns(4)
         
