@@ -143,10 +143,12 @@ daily_pnl = np.random.normal(...)
 - **Fallback**: Essaie 7 derniers jours automatiquement
 - **Message clair**: Explique la situation aux utilisateurs
 
-### 💡 P&L Backtesting
-- **Démo**: Données simulées avec seed fixe
-- **Futur**: Intégration vraies recommandations historiques
-- **Note visible**: "Backtesting démo - vraies données en développement"
+### 💰 P&L Backtesting **RÉEL**
+- **✅ 100% RÉEL**: Basé sur vos vraies prédictions historiques de la DB
+- **Logique**: Top 10 actions/jour (5 achats + 5 ventes) basées sur prédictions
+- **Métriques**: P&L total, taux réussite jours, taux réussite actions, Sharpe ratio
+- **Graphique**: Performance cumulée RÉELLE de vos prédictions
+- **Transactions**: Détail Prédit vs Réel pour chaque action
 
 ---
 
