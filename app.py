@@ -1487,7 +1487,168 @@ try:
     
     # TAB 8: ANALYSE
     with tab8:
-        st.subheader("🎯 Feature Importance & Insights")
+        st.subheader("🎯 Analyse ML & Feature Importance")
+        
+        # ═══════════════════════════════════════════════
+        # SECTION COMPARAISON MODÈLES (XGBoost vs RF)
+        # ═══════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("📊 Comparaison Modèles: XGBoost vs Random Forest")
+        
+        # Toggle pour activer XGBoost
+        use_xgboost = st.checkbox("🔬 Tester XGBoost (amélioration précision)", value=False, help="XGBoost = Gradient Boosting plus performant que Random Forest")
+        
+        if use_xgboost:
+            with st.spinner('🚀 Training XGBoost en cours... (~30 secondes)'):
+                try:
+                    from src.models.xgboost_model import train_xgboost_model
+                    
+                    # Récupérer R² actuel Random Forest
+                    rf_r2 = r2_score(y_test, y_pred)
+                    rf_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+                    rf_mae = mean_absolute_error(y_test, y_pred)
+                    
+                    rf_metrics = {
+                        'test': {
+                            'r2': rf_r2,
+                            'rmse': rf_rmse,
+                            'mae': rf_mae
+                        }
+                    }
+                    
+                    # Train XGBoost
+                    xgb_model, X_test_xgb, y_test_xgb, y_pred_xgb, features_xgb, metrics_xgb = train_xgboost_model(df_full)
+                    
+                    # Comparaison
+                    comparison_df = xgb_model.compare_with_rf(rf_metrics)
+                    
+                    st.success("✅ XGBoost entraîné avec succès!")
+                    
+                    # Tableau comparatif
+                    st.dataframe(
+                        comparison_df.style.highlight_max(axis=1, subset=['Random Forest', 'XGBoost'], color='lightgreen'),
+                        use_container_width=True
+                    )
+                    
+                    # Métriques side by side
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        rf_display = rf_r2
+                        xgb_display = metrics_xgb['test']['r2']
+                        delta = ((xgb_display - rf_display) / rf_display) * 100
+                        
+                        st.metric(
+                            "R² Score",
+                            f"{xgb_display:.4f}",
+                            delta=f"+{delta:.1f}% vs RF",
+                            help="XGBoost vs Random Forest"
+                        )
+                    
+                    with col2:
+                        rf_mae = rf_metrics['test']['mae']
+                        xgb_mae = metrics_xgb['test']['mae']
+                        delta_mae = ((rf_mae - xgb_mae) / rf_mae) * 100
+                        
+                        st.metric(
+                            "MAE (€/MWh)",
+                            f"{xgb_mae:.2f}",
+                            delta=f"-{delta_mae:.1f}% erreur",
+                            delta_color="inverse",
+                            help="Moins = mieux"
+                        )
+                    
+                    with col3:
+                        if xgb_display > rf_display:
+                            st.success("✅ **XGBoost MEILLEUR!**")
+                            st.markdown(f"Amélioration: **+{delta:.1f}%**")
+                        elif xgb_display == rf_display:
+                            st.info("⚖️ **Performances égales**")
+                        else:
+                            st.warning("⚠️ **RF meilleur** (rare)")
+                    
+                    # Graphiques comparatifs
+                    st.markdown("#### 📈 Prédictions: XGBoost vs Random Forest")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Random Forest
+                        fig_rf = go.Figure()
+                        fig_rf.add_trace(go.Scatter(
+                            x=y_test,
+                            y=y_pred,
+                            mode='markers',
+                            name='Random Forest',
+                            marker=dict(color='#3b82f6', size=5, opacity=0.6)
+                        ))
+                        fig_rf.add_trace(go.Scatter(
+                            x=[y_test.min(), y_test.max()],
+                            y=[y_test.min(), y_test.max()],
+                            mode='lines',
+                            name='Parfait',
+                            line=dict(color='red', dash='dash')
+                        ))
+                        fig_rf.update_layout(
+                            title=f"Random Forest (R²={rf_r2:.3f})",
+                            xaxis_title="Prix Réel",
+                            yaxis_title="Prix Prédit",
+                            template='plotly_dark',
+                            height=400
+                        )
+                        st.plotly_chart(fig_rf, use_container_width=True)
+                    
+                    with col2:
+                        # XGBoost
+                        fig_xgb = go.Figure()
+                        fig_xgb.add_trace(go.Scatter(
+                            x=y_test_xgb,
+                            y=y_pred_xgb,
+                            mode='markers',
+                            name='XGBoost',
+                            marker=dict(color='#f97316', size=5, opacity=0.6)
+                        ))
+                        fig_xgb.add_trace(go.Scatter(
+                            x=[y_test_xgb.min(), y_test_xgb.max()],
+                            y=[y_test_xgb.min(), y_test_xgb.max()],
+                            mode='lines',
+                            name='Parfait',
+                            line=dict(color='red', dash='dash')
+                        ))
+                        fig_xgb.update_layout(
+                            title=f"XGBoost (R²={xgb_display:.3f})",
+                            xaxis_title="Prix Réel",
+                            yaxis_title="Prix Prédit",
+                            template='plotly_dark',
+                            height=400
+                        )
+                        st.plotly_chart(fig_xgb, use_container_width=True)
+                    
+                    # Conclusion
+                    st.info(f"""
+                    💡 **Conclusion:**
+                    - XGBoost améliore la précision de **{delta:.1f}%** vs Random Forest
+                    - Erreur réduite de **{delta_mae:.1f}%** (MAE: {xgb_mae:.2f} vs {rf_mae:.2f} €/MWh)
+                    - {"✅ Recommandé pour production!" if delta > 2 else "⚖️ Performances similaires"}
+                    
+                    🎯 **Impact Trading:**
+                    - Prédictions plus précises = Signaux trading plus fiables
+                    - Moins d'erreur = Meilleure identification opportunités
+                    - Économies potentielles accrues
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"❌ Erreur XGBoost training: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        else:
+            st.info("ℹ️ Cochez la case ci-dessus pour comparer XGBoost vs Random Forest (prend ~30 secondes)")
+        
+        # ═══════════════════════════════════════════════
+        # SECTION FEATURE IMPORTANCE
+        # ═══════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("📊 Feature Importance - Random Forest")
         
         # Feature importance
         importances = pd.DataFrame({
