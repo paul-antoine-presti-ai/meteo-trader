@@ -16,6 +16,7 @@ seaborn>=0.13.0
 # APIs (Phase 2)
 requests>=2.31.0
 python-dotenv>=1.0.0
+pytz>=2024.1  # Timezone handling
 
 # Jupyter
 jupyter>=1.0.0
