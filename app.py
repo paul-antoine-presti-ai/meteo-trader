@@ -346,7 +346,7 @@ def show_sidebar():
 # PAGES
 # ==========================================
 
-def page_overview(df_france, prices_europe, predictions_europe, supply_demand, db):
+def page_overview(df_france, prices_europe, predictions_europe, supply_demand, db, model, features, df_full):
     """Vue d'ensemble"""
     st.markdown("# 🏠 Vue d'Ensemble")
     st.markdown("*Vue synthétique des marchés français et européens avec métriques clés en temps réel*")
@@ -449,17 +449,17 @@ def page_overview(df_france, prices_europe, predictions_europe, supply_demand, d
                     st.markdown(f"Gain: **{row['gain_total']:.0f}€**")
     # ==== BACKTESTING P&L ====
     st.markdown("---")
-    st.subheader("💰 Backtesting - Performance RÉELLE")
-    st.caption("📊 **Résultats basés sur VOS vraies prédictions** : Si vous aviez suivi les top 10 recommandations du modèle chaque jour")
+    st.subheader("💰 Backtesting ML - Performance Historique")
+    st.caption("📊 **Backtesting ML sur données historiques complètes** : Performance du modèle sur ensemble de test (30% des données) avec stratégie top 10 actions/jour")
     
     try:
-        from src.analysis.real_backtesting import calculate_real_backtest
+        from src.analysis.ml_backtesting import calculate_ml_backtest
         
-        # Calculer VRAI backtesting depuis la DB
-        backtest = calculate_real_backtest(db, days=30)
+        # Calculer backtesting ML sur données historiques complètes
+        backtest = calculate_ml_backtest(df_full, model, features, test_size=0.3)
         
         if not backtest['available']:
-            st.info(f"💡 {backtest['message']}")
+            st.warning(f"⚠️ {backtest['message']}")
             st.caption("Le backtesting apparaîtra après quelques jours d'utilisation de l'app")
         else:
             # Données RÉELLES
@@ -520,7 +520,7 @@ def page_overview(df_france, prices_europe, predictions_europe, supply_demand, d
             fig_pnl.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
             
             fig_pnl.update_layout(
-                title="Performance Cumulée RÉELLE - Basée sur vos prédictions historiques",
+                title=f"Performance Cumulée ML Backtesting - {backtest['total_days']} jours · {backtest['total_hours']}h de données",
                 xaxis_title="Date",
                 yaxis_title="P&L Cumulé (€/MWh)",
                 template='plotly_dark',
@@ -552,7 +552,7 @@ def page_overview(df_france, prices_europe, predictions_europe, supply_demand, d
                 else:
                     st.info("Pas encore de transactions")
             
-            st.success("✅ **Backtesting 100% RÉEL** : Basé sur vos vraies prédictions vs prix réels de la base de données")
+            st.success(f"✅ **Backtesting ML validé** : {backtest['train_size']}h train + {backtest['test_size']}h test · R²={backtest['r2']:.2f} · MAE={backtest['mae']:.1f}€")
     
     except Exception as e:
         st.error(f"❌ Erreur backtesting: {e}")
@@ -1658,7 +1658,7 @@ def main():
     
     # Router
     if page == "🏠 Vue d'Ensemble":
-        page_overview(df_france, prices_europe, predictions_europe, supply_demand, db)
+        page_overview(df_france, prices_europe, predictions_europe, supply_demand, db, model, features, df_full)
     elif page == "🌍 Europe":
         page_europe(prices_europe, predictions_europe)
     elif page == "🇫🇷 France Détaillée":
