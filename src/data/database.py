@@ -251,16 +251,57 @@ class PriceDatabase:
             'end_time': end_time
         }
     
+    def get_historical_predictions(self, start_date=None, end_date=None):
+        """
+        Récupère prédictions HISTORIQUES (qui ont été faites dans le passé)
+        
+        Args:
+            start_date: Date début
+            end_date: Date fin
+        
+        Returns:
+            DataFrame avec prédictions historiques et leurs vraies valeurs
+        """
+        query = '''
+            SELECT 
+                p.target_timestamp,
+                p.predicted_price,
+                p.prediction_timestamp,
+                a.price as actual_price
+            FROM predictions p
+            LEFT JOIN actual_prices a ON p.target_timestamp = a.timestamp
+            WHERE p.target_timestamp < datetime('now')
+        '''
+        params = []
+        
+        if start_date:
+            query += ' AND p.target_timestamp >= ?'
+            params.append(start_date)
+        
+        if end_date:
+            query += ' AND p.target_timestamp <= ?'
+            params.append(end_date)
+        
+        query += ' ORDER BY p.target_timestamp'
+        
+        df = pd.read_sql_query(query, self.conn, params=params)
+        
+        if not df.empty:
+            df['target_timestamp'] = pd.to_datetime(df['target_timestamp'])
+            df['prediction_timestamp'] = pd.to_datetime(df['prediction_timestamp'])
+        
+        return df
+    
     def get_unified_timeline(self, lookback_hours=72, lookahead_hours=48):
         """
-        Récupère timeline unifiée: historique + prédictions
+        Récupère timeline unifiée: historique + prédictions historiques + prédictions futures
         
         Args:
             lookback_hours: Heures passées
             lookahead_hours: Heures futures
         
         Returns:
-            DataFrame avec colonnes: timestamp, actual_price, predicted_price, is_future
+            DataFrame avec colonnes: timestamp, actual_price, predicted_price, historical_predicted_price, is_future
         """
         from datetime import timedelta
         
@@ -273,7 +314,26 @@ class PriceDatabase:
         actuals = actuals.rename(columns={'price': 'actual_price'})
         actuals['is_future'] = False
         
-        # Prédictions (futur)
+        # Prédictions HISTORIQUES (ce qu'on avait prédit pour le passé)
+        historical_preds = self.get_historical_predictions(start_date=start_time, end_date=now)
+        
+        # Merger prédictions historiques avec prix réels
+        if not historical_preds.empty:
+            # Prendre dernière prédiction pour chaque timestamp
+            historical_preds = historical_preds.sort_values('prediction_timestamp').groupby('target_timestamp').last().reset_index()
+            historical_preds = historical_preds.rename(columns={
+                'target_timestamp': 'timestamp',
+                'predicted_price': 'historical_predicted_price'
+            })
+            actuals = actuals.merge(
+                historical_preds[['timestamp', 'historical_predicted_price']], 
+                on='timestamp', 
+                how='left'
+            )
+        else:
+            actuals['historical_predicted_price'] = None
+        
+        # Prédictions FUTURES (ce qu'on prédit maintenant)
         predictions = self.get_predictions(start_date=now, end_date=end_time)
         
         # Prendre dernières prédictions pour chaque timestamp
@@ -284,21 +344,22 @@ class PriceDatabase:
                 'predicted_price': 'predicted_price'
             })
             predictions['actual_price'] = None
+            predictions['historical_predicted_price'] = None
             predictions['is_future'] = True
         
         # Combiner
         if actuals.empty and predictions.empty:
             return pd.DataFrame()
         elif actuals.empty:
-            timeline = predictions[['timestamp', 'actual_price', 'predicted_price', 'is_future']]
+            timeline = predictions[['timestamp', 'actual_price', 'predicted_price', 'historical_predicted_price', 'is_future']]
         elif predictions.empty:
             actuals['predicted_price'] = None
-            timeline = actuals[['timestamp', 'actual_price', 'predicted_price', 'is_future']]
+            timeline = actuals[['timestamp', 'actual_price', 'predicted_price', 'historical_predicted_price', 'is_future']]
         else:
             actuals['predicted_price'] = None
             timeline = pd.concat([
-                actuals[['timestamp', 'actual_price', 'predicted_price', 'is_future']],
-                predictions[['timestamp', 'actual_price', 'predicted_price', 'is_future']]
+                actuals[['timestamp', 'actual_price', 'predicted_price', 'historical_predicted_price', 'is_future']],
+                predictions[['timestamp', 'actual_price', 'predicted_price', 'historical_predicted_price', 'is_future']]
             ], ignore_index=True)
         
         timeline = timeline.sort_values('timestamp').reset_index(drop=True)

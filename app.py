@@ -363,8 +363,31 @@ try:
                     mode='lines',
                     name='Prix Réel (Historique)',
                     line=dict(color='#3b82f6', width=3),
-                    hovertemplate='%{x}<br>Prix: %{y:.2f} €/MWh<extra></extra>'
+                    hovertemplate='%{x}<br>Prix Réel: %{y:.2f} €/MWh<extra></extra>'
                 ))
+                
+                # Prédictions HISTORIQUES (ce qu'on avait prédit pour le passé)
+                # Permet de voir l'accuracy du modèle visuellement
+                historical_preds = past_data[past_data['historical_predicted_price'].notna()]
+                if not historical_preds.empty:
+                    # Calculer écart moyen
+                    errors = (historical_preds['historical_predicted_price'] - historical_preds['actual_price']).abs()
+                    mae = errors.mean()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=historical_preds['timestamp'],
+                        y=historical_preds['historical_predicted_price'],
+                        mode='lines',
+                        name=f'Prédictions Passées (MAE: {mae:.2f}€)',
+                        line=dict(color='#fbbf24', width=2, dash='dot'),  # Jaune/or
+                        hovertemplate='%{x}<br>Prédit: %{y:.2f} €/MWh<extra></extra>',
+                        opacity=0.8
+                    ))
+                    
+                    # Métriques accuracy visibles
+                    n_points = len(historical_preds)
+                    st.caption(f"📊 **{n_points} prédictions historiques** affichées en jaune (MAE: {mae:.2f} €/MWh)")
+
             
             # Gap entre dernière donnée et maintenant (si existe)
             if not past_data.empty:
@@ -567,7 +590,7 @@ try:
             # Statistiques Timeline
             st.subheader("📊 Statistiques Timeline")
             
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
                 n_past = len(past_data)
@@ -578,13 +601,29 @@ try:
                 st.metric("🔮 Points Futurs", f"{n_future}h", help="Heures de prédictions")
             
             with col3:
+                # Accuracy des prédictions historiques
+                historical_with_preds = past_data[past_data['historical_predicted_price'].notna()]
+                if not historical_with_preds.empty:
+                    mae = (historical_with_preds['historical_predicted_price'] - historical_with_preds['actual_price']).abs().mean()
+                    mape = (mae / historical_with_preds['actual_price'].mean()) * 100
+                    st.metric(
+                        "🎯 Accuracy Prédictions", 
+                        f"{mae:.2f} €/MWh",
+                        delta=f"{mape:.1f}% erreur",
+                        delta_color="inverse",
+                        help=f"Basé sur {len(historical_with_preds)} prédictions passées"
+                    )
+                else:
+                    st.metric("🎯 Accuracy", "N/A", help="Pas encore de prédictions historiques")
+            
+            with col4:
                 if not past_data.empty:
                     avg_past = past_data['actual_price'].mean()
                     st.metric("💰 Prix Moyen Passé", f"{avg_past:.2f} €/MWh")
                 else:
                     st.metric("💰 Prix Moyen Passé", "N/A")
             
-            with col4:
+            with col5:
                 if not future_data.empty:
                     avg_future = future_data['predicted_price'].mean()
                     st.metric("💰 Prix Moyen Futur", f"{avg_future:.2f} €/MWh")
