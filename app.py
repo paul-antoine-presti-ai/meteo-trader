@@ -11,6 +11,10 @@ from datetime import datetime, timedelta
 import sys
 import os
 
+from dotenv import load_dotenv
+
+# Charger variables d'environnement
+load_dotenv()
 # Configuration
 st.set_page_config(
     page_title="MétéoTrader Pro",
