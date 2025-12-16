@@ -1405,70 +1405,425 @@ try:
     with tab6:
         st.subheader("🌡️ Impact de la Météo sur les Prix")
         
+        st.info("📊 **Analyse des corrélations** : Température, vent et radiation solaire influencent fortement la production d'énergie et donc les prix.")
+        
+        # Statistiques météo actuelles
+        if len(df_full) > 0:
+            latest = df_full.iloc[-1]
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("🌡️ Température", f"{latest['temperature_c']:.1f}°C")
+            
+            with col2:
+                st.metric("💨 Vent", f"{latest['wind_speed_kmh']:.1f} km/h")
+            
+            with col3:
+                st.metric("☀️ Radiation", f"{latest['solar_radiation_wm2']:.0f} W/m²")
+            
+            with col4:
+                if 'wind_onshore_production_gw' in df_full.columns and 'wind_offshore_production_gw' in df_full.columns:
+                    wind_prod = latest['wind_onshore_production_gw'] + latest['wind_offshore_production_gw']
+                    st.metric("🌬️ Prod. Éolienne", f"{wind_prod:.2f} GW")
+        
+        st.markdown("---")
+        
+        # Corrélations
+        st.subheader("📊 Corrélations Météo → Prix")
+        
+        if 'temperature_c' in df_full.columns and 'wind_speed_kmh' in df_full.columns:
+            corr_temp = df_full[['temperature_c', 'price_eur_mwh']].corr().iloc[0, 1]
+            corr_wind = df_full[['wind_speed_kmh', 'price_eur_mwh']].corr().iloc[0, 1]
+            corr_solar = df_full[['solar_radiation_wm2', 'price_eur_mwh']].corr().iloc[0, 1] if 'solar_radiation_wm2' in df_full.columns else 0
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                corr_color = '#00ff00' if corr_temp < -0.2 else ('#ffa500' if abs(corr_temp) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Température ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_temp:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Corrélation négative (normale)' if corr_temp < 0 else 'Corrélation positive'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                corr_color = '#00ff00' if corr_wind < -0.3 else ('#ffa500' if abs(corr_wind) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Vent ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_wind:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Plus de vent = prix ↓' if corr_wind < 0 else 'Plus de vent = prix ↑'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                corr_color = '#00ff00' if corr_solar < -0.2 else ('#ffa500' if abs(corr_solar) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Solaire ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_solar:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Plus de soleil = prix ↓' if corr_solar < 0 else 'Plus de soleil = prix ↑'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Visualisations scatter
         col1, col2 = st.columns(2)
         
         with col1:
-            # Température vs Prix
+            # Température vs Prix (avec régression)
             fig_temp = px.scatter(
                 df_full,
                 x='temperature_c',
                 y='price_eur_mwh',
                 color='hour',
                 labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                title="Température vs Prix",
+                title="🌡️ Température vs Prix (par heure)",
                 template='plotly_dark',
-                color_continuous_scale='Oranges'
+                color_continuous_scale='Oranges',
+                trendline='ols',
+                trendline_color_override='#ff6b35'
             )
+            fig_temp.update_layout(height=400)
             st.plotly_chart(fig_temp, use_container_width=True)
         
         with col2:
-            # Vent vs Prix
+            # Vent vs Prix (avec régression)
             fig_wind = px.scatter(
                 df_full,
                 x='wind_speed_kmh',
                 y='price_eur_mwh',
                 color='hour',
                 labels={'wind_speed_kmh': 'Vitesse Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                title="Vent vs Prix",
+                title="💨 Vent vs Prix (par heure)",
                 template='plotly_dark',
-                color_continuous_scale='Blues'
+                color_continuous_scale='Blues',
+                trendline='ols',
+                trendline_color_override='#3b82f6'
             )
+            fig_wind.update_layout(height=400)
             st.plotly_chart(fig_wind, use_container_width=True)
+        
+        # Timeline météo + prix
+        st.subheader("📈 Évolution Météo & Prix dans le Temps")
+        
+        fig_timeline = go.Figure()
+        
+        # Prix (échelle gauche)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['price_eur_mwh'],
+            name='Prix (€/MWh)',
+            line=dict(color='#ff6b35', width=2),
+            yaxis='y1'
+        ))
+        
+        # Vent (échelle droite)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['wind_speed_kmh'],
+            name='Vent (km/h)',
+            line=dict(color='#3b82f6', width=2, dash='dash'),
+            yaxis='y2'
+        ))
+        
+        # Température (échelle droite)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['temperature_c'],
+            name='Température (°C)',
+            line=dict(color='#ffa500', width=2, dash='dot'),
+            yaxis='y3'
+        ))
+        
+        fig_timeline.update_layout(
+            title="Impact de la Météo sur les Prix (Multi-échelles)",
+            xaxis=dict(title="Date/Heure"),
+            yaxis=dict(
+                title="Prix (€/MWh)",
+                titlefont=dict(color="#ff6b35"),
+                tickfont=dict(color="#ff6b35")
+            ),
+            yaxis2=dict(
+                title="Vent (km/h)",
+                titlefont=dict(color="#3b82f6"),
+                tickfont=dict(color="#3b82f6"),
+                overlaying="y",
+                side="right"
+            ),
+            yaxis3=dict(
+                title="Température (°C)",
+                titlefont=dict(color="#ffa500"),
+                tickfont=dict(color="#ffa500"),
+                overlaying="y",
+                side="right",
+                position=0.95
+            ),
+            hovermode='x unified',
+            template='plotly_dark',
+            height=500,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01
+            )
+        )
+        
+        st.plotly_chart(fig_timeline, use_container_width=True)
+        
+        # Insights
+        st.subheader("💡 Insights Météo")
+        
+        # Jours les plus venteux = prix les plus bas?
+        if 'wind_speed_kmh' in df_full.columns:
+            windiest_days = df_full.nlargest(10, 'wind_speed_kmh')
+            avg_price_windy = windiest_days['price_eur_mwh'].mean()
+            avg_price_overall = df_full['price_eur_mwh'].mean()
+            wind_impact = avg_price_windy - avg_price_overall
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.success(f"""
+                **🌬️ Impact du Vent:**
+                
+                - Prix moyen global: **{avg_price_overall:.2f} €/MWh**
+                - Prix lors des 10h les plus venteuses: **{avg_price_windy:.2f} €/MWh**
+                - Différence: **{wind_impact:+.2f} €/MWh** ({(wind_impact/avg_price_overall)*100:+.1f}%)
+                
+                {'✅ Le vent fait baisser les prix (plus de prod. éolienne)' if wind_impact < 0 else '⚠️ Le vent ne fait pas baisser les prix (surprenant!)'}
+                """)
+            
+            # Températures extrêmes = prix élevés?
+            temp_extreme_low = df_full[df_full['temperature_c'] < 5]
+            temp_extreme_high = df_full[df_full['temperature_c'] > 25]
+            temp_normal = df_full[(df_full['temperature_c'] >= 5) & (df_full['temperature_c'] <= 25)]
+            
+            avg_price_extreme = pd.concat([temp_extreme_low, temp_extreme_high])['price_eur_mwh'].mean() if len(temp_extreme_low) + len(temp_extreme_high) > 0 else avg_price_overall
+            avg_price_normal_temp = temp_normal['price_eur_mwh'].mean() if len(temp_normal) > 0 else avg_price_overall
+            temp_impact = avg_price_extreme - avg_price_normal_temp
+            
+            with col2:
+                st.warning(f"""
+                **🌡️ Impact des Températures Extrêmes:**
+                
+                - Prix moyentemp. normale (5-25°C): **{avg_price_normal_temp:.2f} €/MWh**
+                - Prix lors temp. extrêmes (<5°C ou >25°C): **{avg_price_extreme:.2f} €/MWh**
+                - Différence: **{temp_impact:+.2f} €/MWh** ({(temp_impact/avg_price_normal_temp)*100:+.1f}%)
+                
+                {'⚠️ Les températures extrêmes font monter les prix (+ de demande)' if temp_impact > 0 else '✅ Les températures extrêmes ne font pas monter les prix'}
+                """)
     
     # TAB 7: PRODUCTION
     with tab7:
         st.subheader("⚡ Production Électrique par Filière")
         
-        # Sélectionner colonnes de production
-        prod_cols = [c for c in df_full.columns if 'production_gw' in c and c != 'total_production_gw']
+        st.info("📊 **Mix énergétique France** : Production par type de source (nucléaire, renouvelables, fossiles) en temps réel")
         
-        if prod_cols:
-            # Préparer données pour stacked area
-            prod_data = df_full[['timestamp'] + prod_cols].set_index('timestamp')
-            prod_data.columns = [c.replace('_production_gw', '').replace('_', ' ').title() for c in prod_data.columns]
+        # Sélectionner colonnes de production (exclure total)
+        prod_cols = [c for c in df_full.columns if 'production_gw' in c and c not in ['total_production_gw', 'total_rte_production_gw']]
+        
+        st.caption(f"📋 Colonnes de production disponibles: {len(prod_cols)}")
+        
+        if len(prod_cols) > 0:
+            # Production actuelle (dernière heure)
+            latest = df_full.iloc[-1]
             
-            fig_prod = go.Figure()
+            st.markdown("### ⚡ Production Actuelle")
+            
+            # Calculer les totaux par catégorie
+            nuclear = latest.get('nuclear_production_gw', 0)
+            hydro = sum([latest.get(c, 0) for c in prod_cols if 'hydro' in c])
+            wind = sum([latest.get(c, 0) for c in prod_cols if 'wind' in c])
+            solar = latest.get('solar_production_gw', 0)
+            fossil = sum([latest.get(c, 0) for c in prod_cols if any(f in c for f in ['gas', 'coal', 'oil'])])
+            other = sum([latest.get(c, 0) for c in prod_cols if any(o in c for o in ['biomass', 'waste'])])
+            
+            total_prod = nuclear + hydro + wind + solar + fossil + other
+            
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            
+            with col1:
+                pct = (nuclear / total_prod * 100) if total_prod > 0 else 0
+                st.metric("⚛️ Nucléaire", f"{nuclear:.2f} GW", f"{pct:.1f}%")
+            
+            with col2:
+                pct = (hydro / total_prod * 100) if total_prod > 0 else 0
+                st.metric("💧 Hydraulique", f"{hydro:.2f} GW", f"{pct:.1f}%")
+            
+            with col3:
+                pct = (wind / total_prod * 100) if total_prod > 0 else 0
+                st.metric("🌬️ Éolien", f"{wind:.2f} GW", f"{pct:.1f}%")
+            
+            with col4:
+                pct = (solar / total_prod * 100) if total_prod > 0 else 0
+                st.metric("☀️ Solaire", f"{solar:.2f} GW", f"{pct:.1f}%")
+            
+            with col5:
+                pct = (fossil / total_prod * 100) if total_prod > 0 else 0
+                st.metric("🏭 Fossile", f"{fossil:.2f} GW", f"{pct:.1f}%")
+            
+            with col6:
+                st.metric("⚡ TOTAL", f"{total_prod:.2f} GW", "")
+            
+            st.markdown("---")
+            
+            # Pie chart (mix actuel)
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.markdown("### 🥧 Mix Énergétique Actuel")
+                
+                mix_data = pd.DataFrame({
+                    'Source': ['⚛️ Nucléaire', '💧 Hydraulique', '🌬️ Éolien', '☀️ Solaire', '🏭 Fossile', '♻️ Autre'],
+                    'Production': [nuclear, hydro, wind, solar, fossil, other]
+                })
+                mix_data = mix_data[mix_data['Production'] > 0]  # Retirer les 0
+                
+                fig_pie = px.pie(
+                    mix_data,
+                    values='Production',
+                    names='Source',
+                    title=f"Mix Énergétique - {latest['timestamp'].strftime('%d/%m/%Y %H:%M')}",
+                    template='plotly_dark',
+                    color_discrete_sequence=px.colors.sequential.Oranges_r
+                )
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col2:
+                st.markdown("### 📊 Répartition Renouvelables vs Non-Renouvelables")
+                
+                renewable = hydro + wind + solar + other
+                non_renewable = nuclear + fossil
+                
+                fig_ren = go.Figure(data=[go.Pie(
+                    labels=['🌱 Renouvelables', '⚛️ Non-Renouvelables'],
+                    values=[renewable, non_renewable],
+                    hole=0.4,
+                    marker=dict(colors=['#10b981', '#ef4444'])
+                )])
+                
+                fig_ren.update_traces(textposition='inside', textinfo='percent+label')
+                fig_ren.update_layout(
+                    title="Part des Renouvelables",
+                    template='plotly_dark',
+                    height=400
+                )
+                st.plotly_chart(fig_ren, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Stacked area chart (évolution dans le temps)
+            st.markdown("### 📈 Évolution de la Production par Source")
+            
+            # Préparer données pour stacked area
+            prod_data = df_full[['timestamp'] + prod_cols].copy()
+            prod_data = prod_data.set_index('timestamp')
+            
+            # Renommer joliment
+            rename_map = {
+                c: c.replace('_production_gw', '').replace('_', ' ').title()
+                for c in prod_cols
+            }
+            prod_data = prod_data.rename(columns=rename_map)
+            
+            fig_stack = go.Figure()
+            
+            colors = {
+                'Nuclear': '#ff6b35',
+                'Wind Onshore': '#3b82f6',
+                'Wind Offshore': '#60a5fa',
+                'Solar': '#fbbf24',
+                'Hydro Reservoir': '#10b981',
+                'Hydro River': '#34d399',
+                'Hydro Pumped': '#6ee7b7',
+                'Gas': '#94a3b8',
+                'Coal': '#64748b',
+                'Oil': '#475569',
+                'Biomass': '#84cc16',
+                'Waste': '#a3e635'
+            }
             
             for col in prod_data.columns:
-                fig_prod.add_trace(go.Scatter(
+                fig_stack.add_trace(go.Scatter(
                     x=prod_data.index,
                     y=prod_data[col],
-                    mode='lines',
                     name=col,
+                    mode='lines',
                     stackgroup='one',
-                    fillcolor='rgba(0,0,0,0)'
+                    line=dict(width=0),
+                    fillcolor=colors.get(col, 'rgba(100, 100, 100, 0.5)')
                 ))
             
-            fig_prod.update_layout(
-                title="Production Électrique par Source (GW)",
-                xaxis_title="Date",
+            fig_stack.update_layout(
+                title="Production Électrique par Source (GW) - Stacked Area",
+                xaxis_title="Date/Heure",
                 yaxis_title="Production (GW)",
                 hovermode='x unified',
                 template='plotly_dark',
-                height=500
+                height=500,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor='rgba(26, 26, 26, 0.7)'
+                )
             )
             
-            st.plotly_chart(fig_prod, use_container_width=True)
+            st.plotly_chart(fig_stack, use_container_width=True)
+            
+            # Insights
+            st.markdown("### 💡 Insights Production")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Part des renouvelables moyenne
+                avg_renewable_pct = (df_full[[c for c in prod_cols if any(r in c for r in ['wind', 'solar', 'hydro'])]].sum(axis=1) / df_full[[c for c in prod_cols]].sum(axis=1) * 100).mean()
+                
+                st.success(f"""
+                **🌱 Part Moyenne des Renouvelables:**
+                
+                - **{avg_renewable_pct:.1f}%** de la production totale
+                - Objectif France 2030: **40%**
+                - {'✅ Au-dessus de l\'objectif!' if avg_renewable_pct > 40 else '⚠️ En dessous de l\'objectif'}
+                """)
+            
+            with col2:
+                # Variabilité de la production éolienne/solaire
+                if 'wind_onshore_production_gw' in df_full.columns:
+                    wind_volatility = df_full['wind_onshore_production_gw'].std() / df_full['wind_onshore_production_gw'].mean() * 100 if df_full['wind_onshore_production_gw'].mean() > 0 else 0
+                    
+                    st.info(f"""
+                    **🌬️ Variabilité de l'Éolien:**
+                    
+                    - Coefficient de variation: **{wind_volatility:.1f}%**
+                    - {'⚠️ Production très variable (dépend du vent)' if wind_volatility > 50 else '✅ Production relativement stable'}
+                    - Importance du stockage et du backup
+                    """)
+        
+        else:
+            st.warning("⚠️ Aucune donnée de production disponible. Vérifiez que les APIs RTE sont accessibles.")
+            st.caption(f"Colonnes disponibles dans df_full: {list(df_full.columns)}")
             
             # Prix moyen par heure
             if 'hour' in df_full.columns:
