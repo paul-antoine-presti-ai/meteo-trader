@@ -143,12 +143,14 @@ daily_pnl = np.random.normal(...)
 - **Fallback**: Essaie 7 derniers jours automatiquement
 - **Message clair**: Explique la situation aux utilisateurs
 
-### 💰 P&L Backtesting **RÉEL**
-- **✅ 100% RÉEL**: Basé sur vos vraies prédictions historiques de la DB
-- **Logique**: Top 10 actions/jour (5 achats + 5 ventes) basées sur prédictions
-- **Métriques**: P&L total, taux réussite jours, taux réussite actions, Sharpe ratio
-- **Graphique**: Performance cumulée RÉELLE de vos prédictions
+### 💰 P&L Backtesting **ML IMMÉDIAT**
+- **✅ RÉSULTATS IMMÉDIATS**: Utilise MAX de données historiques APIs (30+ jours)
+- **Méthodologie**: Train/Test Split (70%/30%) - Backtesting ML classique
+- **Logique**: Top 10 actions/jour (5 achats + 5 ventes) sur ensemble test
+- **Métriques**: P&L total, Win Rate, Sharpe + ML (R², MAE, RMSE)
+- **Graphique**: Performance cumulée sur période test
 - **Transactions**: Détail Prédit vs Réel pour chaque action
+- **Avantage**: Plus besoin d'attendre! P&L calculé dès le premier lancement
 
 ---
 
