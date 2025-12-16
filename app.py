@@ -645,7 +645,7 @@ def page_france(df_france, model, features):
                         title="🌡️ Température vs Prix",
                         labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
                         template='plotly_dark',
-                        trendline='ols',
+                        
                         color_continuous_scale='Oranges'
                     )
                     fig_temp.update_layout(paper_bgcolor='#0c0c0c', height=400)
@@ -669,7 +669,7 @@ def page_france(df_france, model, features):
                         title="💨 Vent vs Prix",
                         labels={'wind_speed_kmh': 'Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
                         template='plotly_dark',
-                        trendline='ols',
+                        
                         color_continuous_scale='Blues'
                     )
                     fig_wind.update_layout(paper_bgcolor='#0c0c0c', height=400)
