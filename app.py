@@ -346,7 +346,7 @@ def show_sidebar():
 # PAGES
 # ==========================================
 
-def page_overview(df_france, prices_europe, predictions_europe, supply_demand):
+def page_overview(df_france, prices_europe, predictions_europe, supply_demand, db):
     """Vue d'ensemble"""
     st.markdown("# 🏠 Vue d'Ensemble")
     st.markdown("*Vue synthétique des marchés français et européens avec métriques clés en temps réel*")
@@ -1646,6 +1646,7 @@ def page_ml(df_france, model, features, X_test, y_test):
 def main():
     # Chargement
     try:
+        entsoe_client, db = load_clients()
         df_france, prices_europe, predictions_europe, supply_demand = load_all_data()
         model, features, df_full, X_test, y_test = train_models(df_france)
     except Exception as e:
@@ -1657,7 +1658,7 @@ def main():
     
     # Router
     if page == "🏠 Vue d'Ensemble":
-        page_overview(df_france, prices_europe, predictions_europe, supply_demand)
+        page_overview(df_france, prices_europe, predictions_europe, supply_demand, db)
     elif page == "🌍 Europe":
         page_europe(prices_europe, predictions_europe)
     elif page == "🇫🇷 France Détaillée":
