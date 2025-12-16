@@ -707,10 +707,24 @@ def page_france(df_france, model, features):
                 from datetime import datetime, timedelta
                 
                 client = EntsoeClient()
-                end_date = datetime.now().date()
-                start_date = end_date - timedelta(days=1)
                 
-                prod_df = client.get_actual_generation('FR', str(start_date), str(end_date))
+                # Essayer plusieurs jours en arrière
+                prod_df = pd.DataFrame()
+                for days_back in range(1, 8):  # Essayer les 7 derniers jours
+                    end_date = datetime.now().date() - timedelta(days=days_back)
+                    start_date = end_date - timedelta(days=1)
+                    
+                    try:
+                        prod_df = client.get_actual_generation('FR', str(start_date), str(end_date))
+                        if not prod_df.empty:
+                            # Vérifier si données non nulles
+                            latest_test = prod_df.iloc[-1]
+                            test_vals = [latest_test.get(c, 0) for c in prod_df.columns if 'production' in c.lower()]
+                            if sum(test_vals) > 0:
+                                st.info(f"✅ Données trouvées pour le {end_date.strftime('%d/%m')}")
+                                break
+                    except:
+                        pass
                 
                 if not prod_df.empty and 'timestamp' in prod_df.columns:
                     # Prendre la dernière ligne
@@ -751,7 +765,17 @@ def page_france(df_france, model, features):
                         fig.update_layout(paper_bgcolor='#0c0c0c', plot_bgcolor='#161616')
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning("Données chargées mais toutes à zéro")
+                        st.warning("⚠️ Aucune donnée de production disponible")
+                        st.info("""
+                        💡 **Pourquoi ?**
+                        - Les APIs RTE et ENTSOE-E n'ont pas publié de données récentes
+                        - Délai de publication habituel : 1-2 jours
+                        - Les données apparaîtront dès leur mise à jour
+                        
+                        **En attendant**, utilisez les autres onglets :
+                        - 🌡️ Météo (fonctionne)
+                        - 📈 Prédictions 48h (fonctionne)
+                        """)
                 else:
                     st.error("❌ ENTSOE-E vide")
             except Exception as e:
