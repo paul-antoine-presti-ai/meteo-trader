@@ -1646,7 +1646,7 @@ def page_ml(df_france, model, features, X_test, y_test):
 def main():
     # Chargement
     try:
-        entsoe_client, db = load_clients()
+        entsoe_client, db = init_clients()
         df_france, prices_europe, predictions_europe, supply_demand = load_all_data()
         model, features, df_full, X_test, y_test = train_models(df_france)
     except Exception as e:
