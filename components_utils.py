@@ -8,43 +8,71 @@ import pytz
 
 def display_clock_header():
     """
-    Affiche une horloge minimaliste SIMPLE avec fuseau horaire
+    Affiche une horloge LIVE avec JavaScript qui se met à jour automatiquement
     """
+    import streamlit.components.v1 as components
+    
     paris_tz = pytz.timezone('Europe/Paris')
     now = datetime.now(paris_tz)
     
-    # Calculer temps jusqu'à prochaine mise à jour (top de l'heure)
+    # Calculer temps jusqu'à prochaine mise à jour
     next_hour = (now.replace(minute=0, second=0, microsecond=0) + __import__('datetime').timedelta(hours=1))
     time_to_update = next_hour - now
     hours_to_update = int(time_to_update.total_seconds() / 3600)
     minutes_to_update = int((time_to_update.total_seconds() % 3600) / 60)
     
-    # Affichage simple avec colonnes Streamlit
     col1, col2, col3 = st.columns([2, 2, 1])
     
     with col1:
-        st.markdown(f"""
-        <div style="
-            font-size: 28px;
-            font-weight: 300;
-            color: #ffffff;
-            font-family: 'SF Mono', 'Monaco', monospace;
-            letter-spacing: 2px;
-            padding: 8px 0;
-        ">
-            {now.strftime('%H:%M:%S')}
+        # Horloge JavaScript LIVE
+        components.html(f"""
+        <div style="background: transparent;">
+            <div id="live-clock" style="
+                font-size: 28px;
+                font-weight: 300;
+                color: #ffffff;
+                font-family: 'SF Mono', Monaco, monospace;
+                letter-spacing: 2px;
+                padding: 8px 0;
+                margin: 0;
+            ">
+                {now.strftime('%H:%M:%S')}
+            </div>
+            <div style="
+                font-size: 13px;
+                color: #a0a0a0;
+                margin-top: 4px;
+            ">
+                <strong style="color: #ff6b35;">Europe/Paris</strong> · {now.strftime('%A %d %B %Y')}
+            </div>
         </div>
-        """, unsafe_allow_html=True)
-        st.caption(f"**Europe/Paris** · {now.strftime('%A %d %B %Y')}")
+        
+        <script>
+        function updateClock() {{
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const clockElement = document.getElementById('live-clock');
+            if (clockElement) {{
+                clockElement.textContent = hours + ':' + minutes + ':' + seconds;
+            }}
+        }}
+        
+        // Mettre à jour toutes les secondes
+        setInterval(updateClock, 1000);
+        updateClock();
+        </script>
+        """, height=80)
     
     with col2:
         st.markdown("")  # Espace
     
     with col3:
         if hours_to_update > 0:
-            st.metric("🔄 MAJ données", f"Dans {hours_to_update}h{minutes_to_update:02d}")
+            st.metric("🔄 MAJ", f"Dans {hours_to_update}h{minutes_to_update:02d}")
         else:
-            st.metric("🔄 MAJ données", f"Dans {minutes_to_update} min")
+            st.metric("🔄 MAJ", f"Dans {minutes_to_update}min")
     
     st.divider()
 
