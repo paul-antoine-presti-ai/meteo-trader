@@ -63,10 +63,18 @@ class EntsoeClient:
         Args:
             api_token: Token API ENTSOE-E (ou depuis env var)
         """
-        self.api_token = api_token or os.getenv('ENTSOE_API_TOKEN')
+        # Charger depuis paramètre, st.secrets (Streamlit Cloud), ou .env (local)
+        if api_token:
+            self.api_token = api_token
+        else:
+            try:
+                import streamlit as st
+                self.api_token = st.secrets.get('ENTSOE_API_TOKEN')
+            except:
+                self.api_token = os.getenv('ENTSOE_API_TOKEN')
         
         if not self.api_token:
-            raise ValueError("ENTSOE_API_TOKEN manquant. Ajoutez-le dans .env")
+            raise ValueError("ENTSOE_API_TOKEN manquant. Ajoutez-le dans .env ou Streamlit secrets")
         
         self.base_url = "https://web-api.tp.entsoe.eu/api"
     

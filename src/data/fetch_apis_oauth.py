@@ -14,6 +14,16 @@ from dotenv import load_dotenv
 # Charger les credentials
 load_dotenv()
 
+def get_secret(key: str) -> str:
+    """
+    Charge un secret depuis st.secrets (Streamlit Cloud) ou .env (local)
+    """
+    try:
+        import streamlit as st
+        return st.secrets.get(key)
+    except:
+        return os.getenv(key)
+
 # ====================
 # RTE APIs (OAuth2)
 # ====================
@@ -22,10 +32,10 @@ RTE_BASE_URL = "https://digital.iservices.rte-france.com"
 
 # Credentials (Base64 encodé: client_id:client_secret)
 RTE_CREDENTIALS = {
-    'wholesale': os.getenv('RTE_WHOLESALE_CREDENTIALS'),
-    'generation': os.getenv('RTE_GENERATION_CREDENTIALS'),
-    'consumption': os.getenv('RTE_CONSUMPTION_CREDENTIALS'),
-    'forecast': os.getenv('RTE_FORECAST_CREDENTIALS'),
+    'wholesale': get_secret('RTE_WHOLESALE_CREDENTIALS'),
+    'generation': get_secret('RTE_GENERATION_CREDENTIALS'),
+    'consumption': get_secret('RTE_CONSUMPTION_CREDENTIALS'),
+    'forecast': get_secret('RTE_FORECAST_CREDENTIALS'),
 }
 
 def get_oauth_token(credential_base64):
