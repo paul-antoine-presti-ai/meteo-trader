@@ -449,94 +449,110 @@ def page_overview(df_france, prices_europe, predictions_europe, supply_demand):
                     st.markdown(f"Gain: **{row['gain_total']:.0f}€**")
     # ==== BACKTESTING P&L ====
     st.markdown("---")
-    st.subheader("💰 Backtesting - Performance Historique")
-    st.caption("📊 **Simulation des gains/pertes** : Si vous aviez suivi les top 10 recommandations du modèle chaque jour sur les 30 derniers jours")
+    st.subheader("💰 Backtesting - Performance RÉELLE")
+    st.caption("📊 **Résultats basés sur VOS vraies prédictions** : Si vous aviez suivi les top 10 recommandations du modèle chaque jour")
     
     try:
-        # Backtesting avec données fixes (démo)
-        import numpy as np
+        from src.analysis.real_backtesting import calculate_real_backtest
         
-        # Seed fixe pour résultats reproductibles
-        np.random.seed(42)
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=30, freq='D')
-        daily_pnl = np.random.normal(loc=5, scale=15, size=30)  # PnL moyen +5€ avec volatilité
-        cumulative_pnl = np.cumsum(daily_pnl)
+        # Calculer VRAI backtesting depuis la DB
+        backtest = calculate_real_backtest(db, days=30)
         
-        # Note: Backtesting démo - intégration vraies données en développement
+        if not backtest['available']:
+            st.info(f"💡 {backtest['message']}")
+            st.caption("Le backtesting apparaîtra après quelques jours d'utilisation de l'app")
+        else:
+            # Données RÉELLES
+            total_pnl = backtest['total_pnl']
+            cumulative_pnl = backtest['cumulative_pnl']
+            daily_pnl = backtest['daily_pnl']
+            dates = [pd.Timestamp(d) for d in backtest['dates']]
         
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            total_pnl = cumulative_pnl[-1]
-            st.metric("💰 P&L Total (30j)", f"{total_pnl:.2f} €/MWh", 
-                     delta=f"{daily_pnl[-1]:.2f} € (hier)")
-        
-        with col2:
-            win_rate = (daily_pnl > 0).sum() / len(daily_pnl) * 100
-            st.metric("✅ Taux de Réussite", f"{win_rate:.1f}%",
-                     help="% de jours avec gain positif")
-        
-        with col3:
-            avg_win = daily_pnl[daily_pnl > 0].mean() if (daily_pnl > 0).any() else 0
-            st.metric("📈 Gain Moyen", f"{avg_win:.2f} €/MWh",
-                     help="Gain moyen les jours positifs")
-        
-        with col4:
-            sharpe = daily_pnl.mean() / daily_pnl.std() if daily_pnl.std() > 0 else 0
-            st.metric("📊 Sharpe Ratio", f"{sharpe:.2f}",
-                     help="Ratio rendement/risque")
-        
-        # Graphique P&L cumulé
-        fig_pnl = go.Figure()
-        
-        fig_pnl.add_trace(go.Scatter(
-            x=dates,
-            y=cumulative_pnl,
-            mode='lines+markers',
-            name='P&L Cumulé',
-            line=dict(color='#00ff00' if cumulative_pnl[-1] > 0 else '#ff0000', width=3),
-            fill='tozeroy',
-            fillcolor=f'rgba({"0,255,0" if cumulative_pnl[-1] > 0 else "255,0,0"}, 0.2)'
-        ))
-        
-        fig_pnl.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
-        
-        fig_pnl.update_layout(
-            title="Performance Cumulée - Top 10 Actions Quotidiennes",
-            xaxis_title="Date",
-            yaxis_title="P&L Cumulé (€/MWh)",
-            template='plotly_dark',
-            paper_bgcolor='#0c0c0c',
-            plot_bgcolor='#161616',
-            height=400
-        )
-        
-        st.plotly_chart(fig_pnl, use_container_width=True)
-        
-        # Top 10 dernières transactions
-        with st.expander("📋 Voir les 10 dernières transactions"):
-            transactions = []
-            for i in range(min(10, len(dates))):
-                idx = -(i+1)
-                action = "ACHAT" if i % 2 == 0 else "VENTE"
-                hour = f"{10 + (i % 14)}h"
-                pnl = daily_pnl[idx]
-                status = "✅" if pnl > 0 else "❌"
-                
-                transactions.append({
-                    'Date': dates[idx].strftime('%d/%m'),
-                    'Action': f"{action} {hour}",
-                    'P&L': f"{pnl:+.2f} €",
-                    'Status': status
-                })
+            col1, col2, col3, col4 = st.columns(4)
             
-            st.dataframe(
-                pd.DataFrame(transactions),
-                use_container_width=True,
-                hide_index=True
-            )
+            with col1:
+                delta_color = "normal" if total_pnl > 0 else "inverse"
+                st.metric("💰 P&L Total", f"{total_pnl:.2f} €/MWh", 
+                         delta=f"{backtest['total_days']} jours analysés",
+                         delta_color=delta_color)
+            
+            with col2:
+                st.metric("✅ Taux Réussite Jours", f"{backtest['win_rate']:.1f}%",
+                         delta=f"{backtest['winning_days']}/{backtest['total_days']} jours gagnants",
+                         help="% de jours avec gain positif")
+            
+            with col3:
+                st.metric("🎯 Taux Réussite Actions", f"{backtest['action_success_rate']:.1f}%",
+                         delta=f"{backtest['successful_actions']}/{backtest['total_actions']} actions",
+                         help="% d'actions individuelles gagnantes")
+            
+            with col4:
+                st.metric("📊 Sharpe Ratio", f"{backtest['sharpe_ratio']:.2f}",
+                         help="Ratio rendement/risque")
         
-        st.info("💡 **Note** : Ce backtesting est basé sur des simulations. Intégration des vraies recommandations historiques en cours.")
+            # Métriques supplémentaires
+            col1, col2 = st.columns(2)
+            with col1:
+                if backtest['best_day']:
+                    best = backtest['best_day']
+                    st.success(f"🏆 **Meilleur jour**: {pd.Timestamp(best['date']).strftime('%d/%m')} → +{best['pnl']:.2f} €/MWh")
+            with col2:
+                if backtest['worst_day']:
+                    worst = backtest['worst_day']
+                    st.error(f"📉 **Pire jour**: {pd.Timestamp(worst['date']).strftime('%d/%m')} → {worst['pnl']:.2f} €/MWh")
+            
+            # Graphique P&L cumulé RÉEL
+            fig_pnl = go.Figure()
+            
+            color = '#00ff00' if total_pnl > 0 else '#ff0000'
+            
+            fig_pnl.add_trace(go.Scatter(
+                x=dates,
+                y=cumulative_pnl,
+                mode='lines+markers',
+                name='P&L Cumulé RÉEL',
+                line=dict(color=color, width=3),
+                fill='tozeroy',
+                fillcolor=f'rgba({"0,255,0" if total_pnl > 0 else "255,0,0"}, 0.2)',
+                hovertemplate='%{x}<br>P&L: %{y:.2f} €/MWh<extra></extra>'
+            ))
+            
+            fig_pnl.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
+            
+            fig_pnl.update_layout(
+                title="Performance Cumulée RÉELLE - Basée sur vos prédictions historiques",
+                xaxis_title="Date",
+                yaxis_title="P&L Cumulé (€/MWh)",
+                template='plotly_dark',
+                paper_bgcolor='#0c0c0c',
+                plot_bgcolor='#161616',
+                height=400
+            )
+            
+            st.plotly_chart(fig_pnl, use_container_width=True)
+        
+            # 10 dernières transactions RÉELLES
+            with st.expander("📋 Voir les 10 dernières transactions RÉELLES"):
+                if backtest['details']:
+                    transactions_df = pd.DataFrame(backtest['details'])
+                    transactions_df['Date'] = pd.to_datetime(transactions_df['timestamp']).dt.strftime('%d/%m %Hh')
+                    transactions_df['Prédit'] = transactions_df['predicted'].apply(lambda x: f"{x:.2f}€")
+                    transactions_df['Réel'] = transactions_df['actual'].apply(lambda x: f"{x:.2f}€")
+                    transactions_df['P&L'] = transactions_df['pnl'].apply(lambda x: f"{x:+.2f}€")
+                    transactions_df['Status'] = transactions_df['success'].apply(lambda x: "✅" if x else "❌")
+                    
+                    display_df = transactions_df[['Date', 'action', 'Prédit', 'Réel', 'P&L', 'Status']]
+                    display_df.columns = ['Date', 'Action', 'Prix Prédit', 'Prix Réel', 'P&L', 'Résultat']
+                    
+                    st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("Pas encore de transactions")
+            
+            st.success("✅ **Backtesting 100% RÉEL** : Basé sur vos vraies prédictions vs prix réels de la base de données")
     
     except Exception as e:
         st.error(f"❌ Erreur backtesting: {e}")
