@@ -8,96 +8,45 @@ import pytz
 
 def display_clock_header():
     """
-    Affiche une horloge minimaliste avec fuseau horaire et info de rafraîchissement
-    LIVE: Se met à jour automatiquement avec JavaScript côté client
+    Affiche une horloge minimaliste SIMPLE avec fuseau horaire
     """
     paris_tz = pytz.timezone('Europe/Paris')
     now = datetime.now(paris_tz)
     
-    st.markdown(f"""
-    <script>
-    function updateClock() {{
-        const now = new Date();
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        const seconds = String(now.getSeconds()).padStart(2, '0');
-        const clockElement = document.getElementById('live-clock');
-        if (clockElement) {{
-            clockElement.textContent = hours + ':' + minutes + ':' + seconds;
-        }}
-    }}
-    setInterval(updateClock, 1000);
-    updateClock();
-    </script>
-    """, unsafe_allow_html=True)
+    # Calculer temps jusqu'à prochaine mise à jour (top de l'heure)
+    next_hour = (now.replace(minute=0, second=0, microsecond=0) + __import__('datetime').timedelta(hours=1))
+    time_to_update = next_hour - now
+    hours_to_update = int(time_to_update.total_seconds() / 3600)
+    minutes_to_update = int((time_to_update.total_seconds() % 3600) / 60)
     
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, #1a1a1a 0%, #0c0c0c 100%);
-        border: 1px solid rgba(255, 107, 53, 0.2);
-        border-radius: 12px;
-        padding: 16px 24px;
-        margin-bottom: 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    ">
-        <div style="display: flex; align-items: center; gap: 16px;">
-            <div id="live-clock" style="
-                font-size: 32px;
-                font-weight: 300;
-                color: #ffffff;
-                font-family: 'SF Mono', 'Monaco', monospace;
-                letter-spacing: 2px;
-            ">
-                {now.strftime('%H:%M:%S')}
-            </div>
-            <div style="
-                font-size: 14px;
-                color: #a0a0a0;
-                border-left: 1px solid #333;
-                padding-left: 16px;
-            ">
-                <div style="font-weight: 500; color: #ff6b35;">Europe/Paris (CET/CEST)</div>
-                <div style="font-size: 12px; margin-top: 2px;">{now.strftime('%A %d %B %Y')}</div>
-            </div>
-        </div>
-        
+    # Affichage simple avec colonnes Streamlit
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        st.markdown(f"""
         <div style="
-            background: rgba(255, 107, 53, 0.1);
-            border: 1px solid rgba(255, 107, 53, 0.3);
-            border-radius: 8px;
-            padding: 8px 16px;
-            text-align: right;
+            font-size: 28px;
+            font-weight: 300;
+            color: #ffffff;
+            font-family: 'SF Mono', 'Monaco', monospace;
+            letter-spacing: 2px;
+            padding: 8px 0;
         ">
-            <div style="
-                font-size: 11px;
-                color: #a0a0a0;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 4px;
-            ">
-                Prochaine mise à jour
-            </div>
-            <div style="
-                font-size: 16px;
-                font-weight: 600;
-                color: #ff6b35;
-                font-family: 'SF Mono', monospace;
-            ">
-                {(now.replace(minute=0, second=0) + __import__('datetime').timedelta(hours=1)).strftime('%H:%M')}
-            </div>
-            <div style="
-                font-size: 10px;
-                color: #666;
-                margin-top: 2px;
-            ">
-                Données actualisées chaque heure
-            </div>
+            {now.strftime('%H:%M:%S')}
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+        st.caption(f"**Europe/Paris** · {now.strftime('%A %d %B %Y')}")
+    
+    with col2:
+        st.markdown("")  # Espace
+    
+    with col3:
+        if hours_to_update > 0:
+            st.metric("🔄 MAJ données", f"Dans {hours_to_update}h{minutes_to_update:02d}")
+        else:
+            st.metric("🔄 MAJ données", f"Dans {minutes_to_update} min")
+    
+    st.divider()
 
 
 def display_data_freshness(last_data_time):
