@@ -764,6 +764,88 @@ def page_france(df_france, model, features):
                         fig.update_traces(textposition='inside', textinfo='percent+label')
                         fig.update_layout(paper_bgcolor='#0c0c0c', plot_bgcolor='#161616')
                         st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown("---")
+                        
+                        # Graphique évolution 24h (comme l'original)
+                        st.markdown("### 📈 Évolution Production 24h")
+                        
+                        # Prendre les dernières 24h de données
+                        if len(prod_df) >= 24:
+                            last_24h = prod_df.tail(24)
+                        else:
+                            last_24h = prod_df
+                        
+                        if not last_24h.empty:
+                            import plotly.graph_objects as go
+                            fig_evolution = go.Figure()
+                            
+                            # Nucléaire (rouge/orange)
+                            if nuclear > 0:
+                                nuc_col = [c for c in last_24h.columns if 'nuclear' in c.lower() or 'nucl' in c.lower()]
+                                if nuc_col:
+                                    fig_evolution.add_trace(go.Scatter(
+                                        x=last_24h['timestamp'],
+                                        y=last_24h[nuc_col[0]],
+                                        name='⚛️ Nucléaire',
+                                        line=dict(color='#ff6b35', width=3)
+                                    ))
+                            
+                            # Éolien (bleu)
+                            if wind > 0:
+                                wind_cols = [c for c in last_24h.columns if 'wind' in c.lower()]
+                                if wind_cols:
+                                    wind_sum = last_24h[wind_cols].sum(axis=1)
+                                    fig_evolution.add_trace(go.Scatter(
+                                        x=last_24h['timestamp'],
+                                        y=wind_sum,
+                                        name='🌬️ Éolien',
+                                        line=dict(color='#3b82f6', width=2)
+                                    ))
+                            
+                            # Solaire (jaune)
+                            if solar > 0:
+                                solar_col = [c for c in last_24h.columns if 'solar' in c.lower()]
+                                if solar_col:
+                                    fig_evolution.add_trace(go.Scatter(
+                                        x=last_24h['timestamp'],
+                                        y=last_24h[solar_col[0]],
+                                        name='☀️ Solaire',
+                                        line=dict(color='#fbbf24', width=2)
+                                    ))
+                            
+                            # Hydraulique (cyan)
+                            if hydro > 0:
+                                hydro_cols = [c for c in last_24h.columns if 'hydro' in c.lower()]
+                                if hydro_cols:
+                                    hydro_sum = last_24h[hydro_cols].sum(axis=1)
+                                    fig_evolution.add_trace(go.Scatter(
+                                        x=last_24h['timestamp'],
+                                        y=hydro_sum,
+                                        name='💧 Hydraulique',
+                                        line=dict(color='#06b6d4', width=2)
+                                    ))
+                            
+                            fig_evolution.update_layout(
+                                title="Production par Source - 24 Heures",
+                                xaxis_title="Heure",
+                                yaxis_title="Production (GW)",
+                                template='plotly_dark',
+                                paper_bgcolor='#0c0c0c',
+                                plot_bgcolor='#161616',
+                                height=450,
+                                hovermode='x unified',
+                                legend=dict(
+                                    yanchor="top",
+                                    y=0.99,
+                                    xanchor="left",
+                                    x=0.01
+                                )
+                            )
+                            
+                            st.plotly_chart(fig_evolution, use_container_width=True)
+                        else:
+                            st.info("Pas assez de données pour le graphique d'évolution")
                     else:
                         st.warning("⚠️ Aucune donnée de production disponible")
                         st.info("""
