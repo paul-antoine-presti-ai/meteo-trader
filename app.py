@@ -692,8 +692,15 @@ def page_france(df_france, model, features):
         # Essayer d'abord les données RTE
         prod_cols = [c for c in df_france.columns if 'production_gw' in c.lower()]
         
-        # Si pas de colonnes RTE, essayer ENTSOE-E
-        if len(prod_cols) == 0:
+        # Vérifier si données RTE valides
+        has_valid_data = False
+        if len(prod_cols) > 0 and len(df_france) > 0:
+            latest_test = df_france.iloc[-1]
+            total_rte = sum([latest_test.get(c, 0) for c in prod_cols])
+            has_valid_data = total_rte > 0
+        
+        # Si pas de données valides, utiliser ENTSOE-E
+        if not has_valid_data:
             st.info("📊 Chargement données ENTSOE-E...")
             try:
                 from src.data.entsoe_api import EntsoeClient
