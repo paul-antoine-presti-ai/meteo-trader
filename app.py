@@ -979,6 +979,7 @@ def page_france(df_france, model, features):
         st.caption("🔮 Prévisions des prix basées sur Random Forest + données météo futures")
         
         try:
+            import plotly.graph_objects as go
             from src.models.predict_future import predict_future_prices
             
             with st.spinner('⏳ Calcul des prédictions...'):
