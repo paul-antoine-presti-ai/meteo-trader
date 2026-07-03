@@ -1,0 +1,201 @@
+/* MétéoTrader - Dark Mode Glassmorphism + Orange Mistral */
+
+/* ===== GLOBAL DARK MODE ===== */
+:root {
+    --background-dark: #0a0a0a;
+    --glass-bg: rgba(26, 26, 26, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --mistral-orange: #f97316;
+    --white: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.7);
+}
+
+/* Body background */
+.stApp {
+    background-color: var(--background-dark) !important;
+}
+
+/* ===== GLASSMORPHISM CARDS ===== */
+.element-container, 
+.stMetric,
+div[data-testid="stMetricValue"],
+div[data-testid="stMetricLabel"] {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--glass-border) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
+}
+
+/* ===== MÉTRIQUES ===== */
+div[data-testid="stMetricValue"] {
+    color: var(--white) !important;
+    font-weight: 600 !important;
+}
+
+div[data-testid="stMetricLabel"] {
+    color: var(--text-secondary) !important;
+    font-size: 0.9rem !important;
+}
+
+/* Delta avec orange Mistral */
+div[data-testid="stMetricDelta"] > div {
+    color: var(--mistral-orange) !important;
+}
+
+/* ===== TABS ===== */
+.stTabs [data-baseweb="tab-list"] {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--glass-border) !important;
+    padding: 8px !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    color: var(--text-secondary) !important;
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
+    transition: all 0.3s ease !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(249, 115, 22, 0.1) !important;
+    color: var(--mistral-orange) !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: var(--mistral-orange) !important;
+    color: var(--white) !important;
+}
+
+/* ===== BOUTONS ===== */
+.stButton > button {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid var(--glass-border) !important;
+    color: var(--white) !important;
+    border-radius: 8px !important;
+    padding: 10px 24px !important;
+    transition: all 0.3s ease !important;
+}
+
+.stButton > button:hover {
+    background: var(--mistral-orange) !important;
+    border-color: var(--mistral-orange) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4) !important;
+}
+
+/* ===== DATAFRAMES ===== */
+.stDataFrame {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--glass-border) !important;
+}
+
+/* ===== INFO BOXES ===== */
+.stAlert {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border-radius: 12px !important;
+    border-left: 4px solid var(--mistral-orange) !important;
+    color: var(--white) !important;
+}
+
+/* ===== DIVIDERS ===== */
+hr {
+    border-color: var(--glass-border) !important;
+    margin: 2rem 0 !important;
+}
+
+/* ===== HEADERS ===== */
+h1, h2, h3 {
+    color: var(--white) !important;
+    font-weight: 600 !important;
+}
+
+h1 {
+    background: linear-gradient(90deg, var(--white) 0%, var(--mistral-orange) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* ===== PLOTLY CHARTS ===== */
+.js-plotly-plot {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+}
+
+/* ===== SPINNER ===== */
+.stSpinner > div {
+    border-top-color: var(--mistral-orange) !important;
+}
+
+/* ===== SIDEBAR (si activé) ===== */
+.css-1d391kg, .css-1lcbmhc {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border-right: 1px solid var(--glass-border) !important;
+}
+
+/* ===== INPUTS ===== */
+.stTextInput > div > div > input,
+.stSelectbox > div > div > div,
+.stDateInput > div > div > div {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid var(--glass-border) !important;
+    color: var(--white) !important;
+    border-radius: 8px !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stSelectbox > div > div > div:focus {
+    border-color: var(--mistral-orange) !important;
+    box-shadow: 0 0 0 1px var(--mistral-orange) !important;
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--glass-border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--mistral-orange);
+}
+
+/* ===== ANIMATIONS ===== */
+@keyframes glass-shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+.glass-shimmer {
+    animation: glass-shimmer 3s infinite;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(249, 115, 22, 0.1),
+        transparent
+    );
+    background-size: 1000px 100%;
+}
+

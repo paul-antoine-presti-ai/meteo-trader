@@ -1,0 +1,2 @@
+"""Tests for MétéoTrader application"""
+

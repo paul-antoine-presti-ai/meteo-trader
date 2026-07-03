@@ -1,31 +1,52 @@
 """
-MétéoTrader Pro - Plateforme Unifiée Complète
-Design Cursor • Multi-Pays • Gap Offre/Demande • Arbitrage • ML
+MétéoTrader Dashboard - Prédiction Prix Électricité France
+Application Streamlit pour visualisation interactive
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime, timedelta
 import sys
 import os
-import plotly.express as px
 import pytz
-
-# Composants custom
-from components_utils import display_clock_header
+from components_utils import display_clock_header, display_data_freshness, format_recommendation_card
 from src.trading.advanced_recommendations import AdvancedTradingAdvisor
 
-# Configuration
+# Charger credentials (local .env ou Streamlit secrets)
+try:
+    # Tenter d'accéder aux secrets Streamlit (mode cloud)
+    if st.secrets and 'RTE_WHOLESALE_CREDENTIALS' in st.secrets:
+        os.environ['RTE_WHOLESALE_CREDENTIALS'] = st.secrets['RTE_WHOLESALE_CREDENTIALS']
+        os.environ['RTE_GENERATION_CREDENTIALS'] = st.secrets['RTE_GENERATION_CREDENTIALS']
+        os.environ['RTE_CONSUMPTION_CREDENTIALS'] = st.secrets['RTE_CONSUMPTION_CREDENTIALS']
+        os.environ['RTE_FORECAST_CREDENTIALS'] = st.secrets['RTE_FORECAST_CREDENTIALS']
+except:
+    # Mode local: les credentials sont chargés depuis .env par python-dotenv
+    pass
+
+# Configuration page
 st.set_page_config(
-    page_title="MétéoTrader Pro",
+    page_title="MétéoTrader - Prix Électricité France",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS Design Cursor
+# Injecter CSS personnalisé (Dark Mode + Glassmorphism + Orange Mistral)
+def load_custom_css():
+    """Charge CSS personnalisé pour theme glassmorphism"""
+    try:
+        with open('assets/style.css') as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass  # CSS optionnel
+
+load_custom_css()
+
+# CSS DESIGN CURSOR (COMPLET & ÉPURÉ)
 st.markdown("""
 <style>
     /* Cursor-like Dark Theme */
@@ -52,10 +73,6 @@ st.markdown("""
         border-right: 1px solid var(--border-subtle);
     }
     
-    [data-testid="stSidebar"] .css-1d391kg {
-        padding-top: 2rem;
-    }
-    
     /* Typography Cursor-like */
     h1, h2, h3, h4 {
         color: var(--text-primary);
@@ -75,23 +92,6 @@ st.markdown("""
         font-size: 1.5rem;
         margin-top: 2rem;
         margin-bottom: 1rem;
-    }
-    
-    /* Cards Glass Effect */
-    .glass-card {
-        background: rgba(30, 30, 30, 0.6);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        border-radius: 12px;
-        padding: 20px;
-        margin: 16px 0;
-        transition: all 0.3s ease;
-    }
-    
-    .glass-card:hover {
-        background: rgba(35, 35, 35, 0.7);
-        border-color: rgba(255, 107, 53, 0.2);
-        transform: translateY(-2px);
     }
     
     /* Metrics Cursor-style */
@@ -173,120 +173,64 @@ st.markdown("""
         margin: 2rem 0;
     }
     
-    /* Expander */
-    .streamlit-expanderHeader {
+    /* Info/Warning/Success boxes */
+    .stAlert {
         background-color: var(--bg-secondary);
-        border: 1px solid var(--border-subtle);
+        border-left: 3px solid var(--accent-orange);
         border-radius: 8px;
-        color: var(--text-primary);
     }
-    
-    /* Select box */
-    .stSelectbox [data-baseweb="select"] {
-        background-color: var(--bg-secondary);
-        border-color: var(--border-subtle);
-    }
-    
-    /* Tension badges */
-    .tension-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    .tension-critical { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
-    .tension-high { background: rgba(249, 115, 22, 0.2); color: #f97316; border: 1px solid #f97316; }
-    .tension-medium { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 1px solid #fbbf24; }
-    .tension-balanced { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
-    .tension-surplus { background: rgba(59, 130, 246, 0.2); color: #3b82f6; border: 1px solid #3b82f6; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# HEADER AVEC HORLOGE
+# FONCTIONS
 # ==========================================
-
-# Horloge minimaliste professionnelle
-display_clock_header()
-
-st.title("⚡ MétéoTrader Pro")
-st.markdown("### 🎯 Plateforme Professionnelle de Trading Électricité")
-st.markdown("*Intelligence Artificielle · Météo · Recommandations Temps Réel · Multi-Pays*")
-st.divider()
-
-# ==========================================
-# CHARGEMENT DONNÉES
-# ==========================================
-
-@st.cache_resource
-def init_clients():
-    """Initialise clients API et DB"""
-    from src.data.entsoe_api import EntsoeClient
-    from src.data.database import PriceDatabase
-    os.makedirs('data', exist_ok=True)
-    return EntsoeClient(), PriceDatabase('data/meteotrader.db')
 
 @st.cache_data(ttl=3600)
-def load_all_data():
-    """Charge TOUTES les données en une fois"""
+def load_data():
+    """Charge et prépare les données"""
     sys.path.append('.')
-    
-    # 1. Données France (RTE détaillé)
     from src.data.fetch_apis_oauth import fetch_all_data
-    end_date = datetime.now().date()
+    
+    # Récupérer 1 mois de données JUSQU'À MAINTENANT
+    # Note: APIs RTE ont ~2h de retard, mais Open-Meteo est à jour
+    end_date = datetime.now().date()  # Aujourd'hui!
     start_date = end_date - timedelta(days=30)
     
-    with st.spinner('📊 Chargement France (RTE)...'):
-        df_france = fetch_all_data(str(start_date), str(end_date))
+    with st.spinner('📊 Récupération des données (jusqu\'à maintenant)...'):
+        df = fetch_all_data(str(start_date), str(end_date))
     
-    # 2. Données Europe (ENTSOE-E)
-    from src.data.fetch_europe import fetch_european_prices, predict_prices_europe
-    
-    with st.spinner('🌍 Chargement Europe (ENTSOE-E)...'):
-        prices_europe = fetch_european_prices(countries=['FR', 'DE', 'ES'], days=7)
-        predictions_europe = predict_prices_europe(prices_europe, {}, forecast_hours=48)
-    
-    # 3. Supply/Demand Data
-    client, _ = init_clients()
-    
-    supply_demand = {}
-    for country in ['FR']:
-        try:
-            prod = client.get_actual_generation(country, str(start_date), str(end_date))
-            load = client.get_actual_load(country, str(start_date), str(end_date))
-            forecast = client.get_load_forecast(country, str(start_date), str(end_date))
-            
-            supply_demand[country] = {
-                'production': prod,
-                'load': load,
-                'forecast': forecast
-            }
-        except:
-            pass
-    
-    return df_france, prices_europe, predictions_europe, supply_demand
+    return df
 
 @st.cache_resource
-def train_models(_df_france):
-    """Entraîne les modèles ML"""
+def init_database():
+    """Initialise base de données"""
+    import os
+    from src.data.database import PriceDatabase
+    
+    # S'assurer que le dossier existe
+    os.makedirs('data', exist_ok=True)
+    
+    return PriceDatabase('data/meteotrader.db')
+
+@st.cache_resource
+def train_model(df):
+    """Entraîne le modèle ML"""
     from sklearn.ensemble import RandomForestRegressor
     from sklearn.model_selection import train_test_split
     
-    # Features
-    df = _df_france.copy()
+    # Features temporelles
     df['hour'] = df['timestamp'].dt.hour
     df['day_of_week'] = df['timestamp'].dt.dayofweek
     df['month'] = df['timestamp'].dt.month
     df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
     df['is_peak_hour'] = ((df['hour'] >= 18) & (df['hour'] <= 20)).astype(int)
     
+    # Features température
     if 'temperature_c' in df.columns:
         df['temp_extreme'] = ((df['temperature_c'] < 5) | (df['temperature_c'] > 25)).astype(int)
     
+    # Production renouvelable
     prod_cols = [c for c in df.columns if 'production_gw' in c and c != 'total_production_gw']
     if prod_cols:
         renewable_cols = [c for c in prod_cols if 'wind' in c.lower() or 'solar' in c.lower()]
@@ -295,9 +239,11 @@ def train_models(_df_france):
             df['renewable_share'] = df['renewable_production_gw'] / df['total_production_gw'].replace(0, np.nan)
             df['renewable_share'] = df['renewable_share'].fillna(0)
     
+    # Gap production-demande
     if 'demand_gw' in df.columns and 'total_production_gw' in df.columns:
         df['production_demand_gap'] = df['demand_gw'] - df['total_production_gw']
     
+    # Sélectionner features
     feature_columns = [
         'temperature_c', 'wind_speed_kmh', 'solar_radiation_wm2',
         'nuclear_production_gw', 'total_production_gw', 'demand_gw',
@@ -306,626 +252,1277 @@ def train_models(_df_france):
     ]
     feature_columns = [f for f in feature_columns if f in df.columns]
     
+    # Préparer données
     X = df[feature_columns].fillna(0)
     y = df['price_eur_mwh']
     
+    # Split
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
     
+    # Entraîner
     model = RandomForestRegressor(n_estimators=100, max_depth=15, random_state=42, n_jobs=-1)
     model.fit(X_train, y_train)
     
-    return model, feature_columns, df, X_test, y_test
-
-# ==========================================
-# SIDEBAR NAVIGATION
-# ==========================================
-
-def show_sidebar():
-    """Sidebar Cursor-style"""
-    with st.sidebar:
-        st.markdown("### ⚡ MétéoTrader Pro")
-        st.markdown("---")
-        
-        page = st.radio(
-            "Navigation",
-            ["🏠 Vue d'Ensemble", "🌍 Europe", "🇫🇷 France Détaillée", 
-             "⚖️ Gap Offre/Demande", "💰 Arbitrage", "📊 Mes Contrats", 
-             "🔮 Prédictions Détaillées", "🤖 Modèles ML"],
-            label_visibility="collapsed"
-        )
-        
-        st.markdown("---")
-        st.markdown(f"**{datetime.now().strftime('%H:%M')}**")
-        st.markdown(f"{datetime.now().strftime('%d %B %Y')}")
-        
-        return page
-
-# ==========================================
-# PAGES
-# ==========================================
-
-def page_overview(df_france, prices_europe, predictions_europe, supply_demand, db, model, features, df_full):
-    """Vue d'ensemble"""
-    st.markdown("# 🏠 Vue d'Ensemble")
-    st.markdown("*Vue synthétique des marchés français et européens avec métriques clés en temps réel*")
-    st.divider()
+    # Prédictions
+    y_pred = model.predict(X_test)
     
-    # Métriques principales
+    return model, X_test, y_test, y_pred, feature_columns, df
+
+# ==========================================
+# HEADER
+# ==========================================
+
+# Horloge minimaliste avec fuseau horaire et timer de rafraîchissement
+display_clock_header()
+
+st.title("⚡ MétéoTrader Pro")
+st.markdown("### 🎯 Plateforme Professionnelle de Trading Électricité")
+st.markdown("*Intelligence Artificielle · Météo · Marché Européen · Recommandations en Temps Réel*")
+st.divider()
+
+# ==========================================
+# CHARGEMENT DONNÉES
+# ==========================================
+
+try:
+    df = load_data()
+    db = init_database()
+    model, X_test, y_test, y_pred, features, df_full = train_model(df)
+    
+    # Stocker SEULEMENT l'historique RÉEL (avant maintenant!)
+    if 'price_eur_mwh' in df_full.columns:
+        try:
+            # Filtrer UNIQUEMENT les données passées (avant maintenant)
+            now = pd.Timestamp.now()
+            historical_prices = df_full[df_full['timestamp'] < now][['timestamp', 'price_eur_mwh']].dropna().copy()
+            
+            # Vérifier combien de prix on a déjà
+            existing = db.get_actual_prices()
+            n_existing = len(existing)
+            
+            # Stocker seulement le VRAI historique
+            n_stored = db.store_actual_prices(historical_prices, source='RTE_Historical')
+            
+            if n_stored > 0:
+                last_actual = historical_prices['timestamp'].max()
+                st.success(f"✅ {n_stored} prix historiques stockés (jusqu'à {last_actual.strftime('%d %b %H:%M')})")
+        except Exception as e:
+            st.warning(f"⚠️ Stockage historique: {str(e)}")
+    
+    # Métriques
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    r2 = r2_score(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mae = mean_absolute_error(y_test, y_pred)
+    
+    # ==========================================
+    # METRICS ROW
+    # ==========================================
+    
     col1, col2, col3, col4 = st.columns(4)
     
-    # Prix France
-    if not df_france.empty:
-        latest_price = df_france.iloc[-1]['price_eur_mwh']
-        with col1:
-            st.metric("Prix Spot FR", f"{latest_price:.1f} €/MWh", delta=None)
-    
-    # Gap France
-    if 'FR' in supply_demand:
-        from src.analysis.supply_demand import SupplyDemandAnalyzer
-        analyzer = SupplyDemandAnalyzer()
-        
-        analysis = analyzer.analyze_country_market(
-            supply_demand['FR']['production'],
-            supply_demand['FR']['load'],
-            prices_europe.get('FR')
+    with col1:
+        st.metric(
+            label="📊 R² Score",
+            value=f"{r2:.3f}",
+            delta=f"{r2*100:.1f}% variance expliquée"
         )
-        
-        if not analysis.empty:
-            current = analyzer.get_current_situation(analysis)
-            if current:
-                with col2:
-                    st.metric("Gap FR", f"{current['gap_gw']:+.1f} GW", 
-                             delta=f"{current['reserve_margin_pct']:+.1f}%")
     
-    # Opportunités
-    from src.arbitrage.engine import ArbitrageEngine
-    engine = ArbitrageEngine(predictions_europe)
-    opps = engine.calculate_all_opportunities()
+    with col2:
+        st.metric(
+            label="🎯 Précision",
+            value=f"{mae:.2f} €/MWh",
+            delta=f"{(mae/y_test.mean())*100:.1f}% erreur moyenne"
+        )
     
-    if not opps.empty:
-        n_opps = len(opps[opps['score'] >= 50])
-        with col3:
-            st.metric("Opportunités", f"{n_opps}")
+    with col3:
+        st.metric(
+            label="💰 Prix Moyen",
+            value=f"{y_test.mean():.2f} €/MWh",
+            delta=f"Min: {y_test.min():.0f} | Max: {y_test.max():.0f}"
+        )
     
-    # Marge potentielle
-    margin = engine.calculate_potential_margin(hours=48)
     with col4:
-        st.metric("Marge 48h", f"{margin['total_margin']:.0f} €")
+        st.metric(
+            label="📈 Données",
+            value=f"{len(df)} heures",
+            delta=f"{len(df)//24} jours analysés"
+        )
     
-    st.markdown("---")
+    st.divider()
     
-    # Graphique comparaison multi-pays
-    st.markdown("### 📈 Comparaison Prix Europe (48h)")
+    # ==========================================
+    # GRAPHIQUES
+    # ==========================================
     
-    fig = go.Figure()
-    colors = {'FR': '#3b82f6', 'DE': '#10b981', 'ES': '#f97316'}
+    # Tabs pour navigation
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "⏱️ Timeline Live", 
+        "📊 Trading Signals",  # NOUVEAU!
+        "🗺️ Carte Europe", 
+        "📈 Prédictions", 
+        "🔮 Prévisions 48h", 
+        "🌡️ Impact Météo", 
+        "⚡ Production", 
+        "🎯 Analyse"
+    ])
     
-    for country, pred_df in predictions_europe.items():
-        if not pred_df.empty:
-            fig.add_trace(go.Scatter(
-                x=pred_df['timestamp'],
-                y=pred_df['predicted_price'],
-                mode='lines',
-                name=f"🏴 {country}",
-                line=dict(color=colors.get(country, '#ffffff'), width=2)
-            ))
-    
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#0c0c0c',
-        plot_bgcolor='#161616',
-        height=400,
-        xaxis_title="",
-        yaxis_title="Prix (€/MWh)",
-        hovermode='x unified',
-        showlegend=True,
-        legend=dict(orientation="h", y=1.1)
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Top 3 opportunités
-    st.markdown("### 💰 Top Opportunités")
-    
-    if not opps.empty:
-        top3 = engine.get_top_opportunities(n=3, min_score=50)
+    # TAB 1: TIMELINE UNIFIÉE (NOUVEAU!)
+    with tab1:
+        st.subheader("⏱️ Timeline Unifiée - Passé, Présent & Futur")
         
-        if not top3.empty:
-            for idx, row in top3.iterrows():
-                col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+        st.info("🚀 **Live!** Vue complète: historique réel → maintenant → prédictions futures + tracking accuracy temps réel")
+        
+        # Calculer et stocker prédictions futures
+        try:
+            from src.models.predict_future import predict_future_prices
+            
+            with st.spinner('🔮 Génération prédictions futures...'):
+                # Générer prédictions J+1/J+2
+                future_predictions = predict_future_prices(
+                    model=model,
+                    feature_columns=features,
+                    historical_data=df_full,
+                    days=2
+                )
                 
-                with col1:
-                    st.markdown(f"**{row['from_country']} → {row['to_country']}**")
+                # Stocker en base
+                if not future_predictions.empty:
+                    try:
+                        db.store_predictions(future_predictions, model_version='rf_v1')
+                        st.success(f"✅ {len(future_predictions)} prédictions stockées!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Stockage prédictions échoué: {str(e)}")
+        except Exception as e:
+            st.error(f"⚠️ Génération prédictions échouée: {str(e)}")
+            future_predictions = pd.DataFrame()
+        
+        # Récupérer timeline unifiée
+        timeline = db.get_unified_timeline(lookback_hours=72, lookahead_hours=48)
+        
+        # Combler gap entre dernière donnée réelle et maintenant avec prédictions récentes
+        if not timeline.empty:
+            now = pd.Timestamp.now()
+            past_data_check = timeline[timeline['is_future'] == False]
+            
+            if not past_data_check.empty:
+                last_actual_time = past_data_check['timestamp'].max()
+                gap_hours = (now - last_actual_time).total_seconds() / 3600
                 
-                with col2:
-                    st.markdown(f"Spread: **{row['spread_net']:.1f}€/MWh**")
-                
-                with col3:
-                    st.markdown(f"Volume: **{row['volume_optimal']:.0f} MWh**")
-                
-                with col4:
-                    st.markdown(f"Gain: **{row['gain_total']:.0f}€**")
-    # ==== BACKTESTING P&L ====
-    st.markdown("---")
-    st.subheader("💰 Backtesting ML - Performance Historique")
-    st.caption("📊 **Backtesting ML sur données historiques complètes** : Performance du modèle sur ensemble de test (30% des données) avec stratégie top 10 actions/jour")
-    
-    try:
-        from src.analysis.ml_backtesting import calculate_ml_backtest
-        
-        # Calculer backtesting ML sur données historiques complètes
-        backtest = calculate_ml_backtest(df_full, model, features, test_size=0.3)
-        
-        if not backtest['available']:
-            st.warning(f"⚠️ {backtest['message']}")
-            st.caption("Le backtesting apparaîtra après quelques jours d'utilisation de l'app")
-        else:
-            # Données RÉELLES
-            total_pnl = backtest['total_pnl']
-            cumulative_pnl = backtest['cumulative_pnl']
-            daily_pnl = backtest['daily_pnl']
-            dates = [pd.Timestamp(d) for d in backtest['dates']]
-        
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                delta_color = "normal" if total_pnl > 0 else "inverse"
-                st.metric("💰 P&L Total", f"{total_pnl:.2f} €/MWh", 
-                         delta=f"{backtest['total_days']} jours analysés",
-                         delta_color=delta_color)
-            
-            with col2:
-                st.metric("✅ Taux Réussite Jours", f"{backtest['win_rate']:.1f}%",
-                         delta=f"{backtest['winning_days']}/{backtest['total_days']} jours gagnants",
-                         help="% de jours avec gain positif")
-            
-            with col3:
-                st.metric("🎯 Taux Réussite Actions", f"{backtest['action_success_rate']:.1f}%",
-                         delta=f"{backtest['successful_actions']}/{backtest['total_actions']} actions",
-                         help="% d'actions individuelles gagnantes")
-            
-            with col4:
-                st.metric("📊 Sharpe Ratio", f"{backtest['sharpe_ratio']:.2f}",
-                         help="Ratio rendement/risque")
-        
-            # Métriques supplémentaires
-            col1, col2 = st.columns(2)
-            with col1:
-                if backtest['best_day']:
-                    best = backtest['best_day']
-                    st.success(f"🏆 **Meilleur jour**: {pd.Timestamp(best['date']).strftime('%d/%m')} → +{best['pnl']:.2f} €/MWh")
-            with col2:
-                if backtest['worst_day']:
-                    worst = backtest['worst_day']
-                    st.error(f"📉 **Pire jour**: {pd.Timestamp(worst['date']).strftime('%d/%m')} → {worst['pnl']:.2f} €/MWh")
-            
-            # Graphique P&L cumulé RÉEL
-            fig_pnl = go.Figure()
-            
-            color = '#00ff00' if total_pnl > 0 else '#ff0000'
-            
-            fig_pnl.add_trace(go.Scatter(
-                x=dates,
-                y=cumulative_pnl,
-                mode='lines+markers',
-                name='P&L Cumulé RÉEL',
-                line=dict(color=color, width=3),
-                fill='tozeroy',
-                fillcolor=f'rgba({"0,255,0" if total_pnl > 0 else "255,0,0"}, 0.2)',
-                hovertemplate='%{x}<br>P&L: %{y:.2f} €/MWh<extra></extra>'
-            ))
-            
-            fig_pnl.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
-            
-            fig_pnl.update_layout(
-                title=f"Performance Cumulée ML Backtesting - {backtest['total_days']} jours · {backtest['total_hours']}h de données",
-                xaxis_title="Date",
-                yaxis_title="P&L Cumulé (€/MWh)",
-                template='plotly_dark',
-                paper_bgcolor='#0c0c0c',
-                plot_bgcolor='#161616',
-                height=400
-            )
-            
-            st.plotly_chart(fig_pnl, use_container_width=True)
-        
-            # 10 dernières transactions RÉELLES
-            with st.expander("📋 Voir les 10 dernières transactions RÉELLES"):
-                if backtest['details']:
-                    transactions_df = pd.DataFrame(backtest['details'])
-                    transactions_df['Date'] = pd.to_datetime(transactions_df['timestamp']).dt.strftime('%d/%m %Hh')
-                    transactions_df['Prédit'] = transactions_df['predicted'].apply(lambda x: f"{x:.2f}€")
-                    transactions_df['Réel'] = transactions_df['actual'].apply(lambda x: f"{x:.2f}€")
-                    transactions_df['P&L'] = transactions_df['pnl'].apply(lambda x: f"{x:+.2f}€")
-                    transactions_df['Status'] = transactions_df['success'].apply(lambda x: "✅" if x else "❌")
+                # Si gap > 1h, utiliser prédictions récentes pour combler
+                if gap_hours > 1:
+                    st.info(f"ℹ️ Gap de {gap_hours:.1f}h entre dernière donnée réelle ({last_actual_time.strftime('%H:%M')}) et maintenant. APIs RTE ont du retard.")
                     
-                    display_df = transactions_df[['Date', 'action', 'Prédit', 'Réel', 'P&L', 'Status']]
-                    display_df.columns = ['Date', 'Action', 'Prix Prédit', 'Prix Réel', 'P&L', 'Résultat']
+                    # Trouver prédictions dans le gap
+                    gap_predictions = timeline[
+                        (timeline['is_future'] == True) & 
+                        (timeline['timestamp'] > last_actual_time) &
+                        (timeline['timestamp'] <= now)
+                    ].copy()
                     
-                    st.dataframe(
-                        display_df,
-                        use_container_width=True,
-                        hide_index=True
+                    if not gap_predictions.empty:
+                        # Afficher ces prédictions comme "estimations récentes"
+                        st.caption(f"📊 {len(gap_predictions)} points estimés pour combler le gap (en orange clair)")
+        
+        if not timeline.empty:
+            # Heure actuelle
+            now = pd.Timestamp.now()
+            
+            # Métriques Accuracy en temps réel
+            st.subheader("🎯 Accuracy Temps Réel")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            # Accuracy 1h
+            with col1:
+                acc_1h = db.calculate_accuracy(period_hours=1)
+                if acc_1h['mae']:
+                    st.metric(
+                        label="📊 Accuracy 1 Heure",
+                        value=f"{acc_1h['mae']:.2f} €/MWh",
+                        delta=f"{acc_1h['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_1h['n_predictions']} prédictions"
                     )
                 else:
-                    st.info("Pas encore de transactions")
+                    st.metric(label="📊 Accuracy 1 Heure", value="N/A", delta="Pas de données")
             
-            st.success(f"✅ **Backtesting ML validé** : {backtest['train_size']}h train + {backtest['test_size']}h test · R²={backtest['r2']:.2f} · MAE={backtest['mae']:.1f}€")
-    
-    except Exception as e:
-        st.error(f"❌ Erreur backtesting: {e}")
+            # Accuracy 24h
+            with col2:
+                acc_24h = db.calculate_accuracy(period_hours=24)
+                if acc_24h['mae']:
+                    st.metric(
+                        label="📊 Accuracy 24 Heures",
+                        value=f"{acc_24h['mae']:.2f} €/MWh",
+                        delta=f"{acc_24h['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_24h['n_predictions']} prédictions"
+                    )
+                else:
+                    st.metric(label="📊 Accuracy 24 Heures", value="N/A", delta="Pas de données")
+            
+            # Accuracy 7j
+            with col3:
+                acc_7d = db.calculate_accuracy(period_hours=168)
+                if acc_7d['mae']:
+                    st.metric(
+                        label="📊 Accuracy 7 Jours",
+                        value=f"{acc_7d['mae']:.2f} €/MWh",
+                        delta=f"{acc_7d['mape']:.1f}% MAPE",
+                        help=f"Basé sur {acc_7d['n_predictions']} prédictions"
+                    )
+                else:
+                    st.metric(label="📊 Accuracy 7 Jours", value="N/A", delta="Pas de données")
+            
+            st.divider()
+            
+            # Graphique Timeline Unifié
+            st.subheader("📈 Timeline Complète")
+            
+            fig_timeline = go.Figure()
+            
+            # Prix historiques (passé)
+            past_data = timeline[timeline['is_future'] == False]
+            if not past_data.empty:
+                fig_timeline.add_trace(go.Scatter(
+                    x=past_data['timestamp'],
+                    y=past_data['actual_price'],
+                    mode='lines',
+                    name='Prix Réel (Historique)',
+                    line=dict(color='#3b82f6', width=3),
+                    hovertemplate='%{x}<br>Prix Réel: %{y:.2f} €/MWh<extra></extra>'
+                ))
+                
+                # Prédictions HISTORIQUES (ce qu'on avait prédit pour le passé)
+                # Permet de voir l'accuracy du modèle visuellement
+                if 'historical_predicted_price' in past_data.columns:
+                    historical_preds = past_data[past_data['historical_predicted_price'].notna()]
+                    if not historical_preds.empty:
+                        # Calculer écart moyen
+                        errors = (historical_preds['historical_predicted_price'] - historical_preds['actual_price']).abs()
+                        mae = errors.mean()
+                        
+                        fig_timeline.add_trace(go.Scatter(
+                            x=historical_preds['timestamp'],
+                            y=historical_preds['historical_predicted_price'],
+                            mode='lines',
+                            name=f'Prédictions Passées (MAE: {mae:.2f}€)',
+                            line=dict(color='#fbbf24', width=2, dash='dot'),  # Jaune/or
+                            hovertemplate='%{x}<br>Prédit: %{y:.2f} €/MWh<extra></extra>',
+                            opacity=0.8
+                        ))
+                        
+                        # Métriques accuracy visibles
+                        n_points = len(historical_preds)
+                        st.caption(f"📊 **{n_points} prédictions historiques** affichées en jaune (MAE: {mae:.2f} €/MWh)")
+                else:
+                    st.caption("ℹ️ Prédictions historiques: Pas encore disponibles (besoin de quelques heures d'utilisation)")
 
-
-def page_europe(prices_europe, predictions_europe):
-    """Page Europe - Marchés interconnectés"""
-    st.markdown("# 🌍 Marchés Européens")
-    st.markdown("*Comparaison des prix spot sur les marchés européens avec analyse des écarts et opportunités d'arbitrage*")
-    st.divider()
-    
-    # Section 1: Graphique Multi-Pays INTERACTIF
-    st.subheader("📊 Prix par Pays - Vue Interactive")
-    st.caption("🔍 Cochez/décochez les pays pour comparer les évolutions. Prix réels (solide) vs prédictions (pointillés)")
-    
-    # Créer graphique Plotly interactif
-    fig_multi = go.Figure()
-    
-    countries_data = []
-    for country, df in prices_europe.items():
-        if not df.empty and 'timestamp' in df.columns and 'price_eur_mwh' in df.columns:
-            countries_data.append((country, df))
             
-            # Prix réels
-            fig_multi.add_trace(go.Scatter(
-                x=df['timestamp'],
-                y=df['price_eur_mwh'],
-                name=f'{country} (Réel)',
-                mode='lines',
-                line=dict(width=2),
-                visible=True,
-                hovertemplate=f'<b>{country}</b><br>%{{x}}<br>Prix: %{{y:.2f}} €/MWh<extra></extra>'
-            ))
-            
-            # Prédictions si disponibles
-            if country in predictions_europe and not predictions_europe[country].empty:
-                pred_df = predictions_europe[country]
-                if 'timestamp' in pred_df.columns and 'predicted_price' in pred_df.columns:
-                    fig_multi.add_trace(go.Scatter(
-                        x=pred_df['timestamp'],
-                        y=pred_df['predicted_price'],
-                        name=f'{country} (Prédit)',
+            # Gap entre dernière donnée et maintenant (si existe)
+            if not past_data.empty:
+                last_actual_time = past_data['timestamp'].max()
+                gap_data = timeline[
+                    (timeline['is_future'] == True) & 
+                    (timeline['timestamp'] > last_actual_time) &
+                    (timeline['timestamp'] <= now)
+                ]
+                
+                if not gap_data.empty:
+                    # Courbe gap (orange clair, pointillés légers)
+                    last_actual = past_data.iloc[-1]
+                    gap_timestamps = [last_actual['timestamp']] + gap_data['timestamp'].tolist()
+                    gap_prices = [last_actual['actual_price']] + gap_data['predicted_price'].tolist()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=gap_timestamps,
+                        y=gap_prices,
                         mode='lines',
-                        line=dict(width=2, dash='dash'),
-                        visible=True,
-                        opacity=0.7,
-                        hovertemplate=f'<b>{country} Prévu</b><br>%{{x}}<br>Prix: %{{y:.2f}} €/MWh<extra></extra>'
+                        name='Estimation Gap (APIs en retard)',
+                        line=dict(color='#fb923c', width=2, dash='dot'),
+                        hovertemplate='%{x}<br>Estimation: %{y:.2f} €/MWh<extra></extra>',
+                        showlegend=True
                     ))
-    
-    fig_multi.update_layout(
-        title="Prix de l'Électricité - Multi-Pays (Interactif)",
-        xaxis_title="Date/Heure",
-        yaxis_title="Prix (€/MWh)",
-        template='plotly_dark',
-        paper_bgcolor='#0c0c0c',
-        plot_bgcolor='#161616',
-        height=600,
-        hovermode='x unified',
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01,
-            bgcolor='rgba(26, 26, 26, 0.7)'
-        )
-    )
-    
-    st.plotly_chart(fig_multi, use_container_width=True)
-    
-    # Section 2: Stats par pays
-    st.markdown("---")
-    st.subheader("💰 Statistiques par Pays")
-    
-    cols = st.columns(min(3, len(countries_data)))
-    
-    for idx, (country, df) in enumerate(countries_data):
-        with cols[idx % len(cols)]:
-            avg_price = df['price_eur_mwh'].mean()
-            min_price = df['price_eur_mwh'].min()
-            max_price = df['price_eur_mwh'].max()
             
-            st.markdown(f"""
-            <div style="
-                background: rgba(30, 30, 30, 0.6);
-                border: 1px solid rgba(255, 107, 53, 0.2);
-                border-radius: 12px;
-                padding: 20px;
-                text-align: center;
-            ">
-                <h3 style="color: #ff6b35;">🏴 {country}</h3>
-                <p style="font-size: 2.5rem; margin: 10px 0; color: white;">{avg_price:.1f}€</p>
-                <p style="color: #a0a0a0; font-size: 0.9rem;">
-                    Min: {min_price:.1f}€ • Max: {max_price:.1f}€
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Section 3: Opportunités d'arbitrage
-    if len(countries_data) >= 2:
-        st.markdown("---")
-        st.subheader("💱 Opportunités d'Arbitrage")
-        st.caption("📈 Écarts de prix entre pays pour le trading cross-border")
-        
-        # Calculer spreads
-        spreads = []
-        for i, (country1, df1) in enumerate(countries_data):
-            for country2, df2 in countries_data[i+1:]:
-                if len(df1) > 0 and len(df2) > 0:
-                    avg1 = df1['price_eur_mwh'].mean()
-                    avg2 = df2['price_eur_mwh'].mean()
-                    spread = abs(avg1 - avg2)
-                    direction = f"{country1} → {country2}" if avg1 < avg2 else f"{country2} → {country1}"
-                    spreads.append((direction, spread))
-        
-        spreads.sort(key=lambda x: x[1], reverse=True)
-        
-        col1, col2, col3 = st.columns(3)
-        for idx, (direction, spread) in enumerate(spreads[:3]):
-            with [col1, col2, col3][idx]:
-                st.success(f"""
-                **#{idx+1} {direction}**
+            # Prix futurs (prédictions)
+            future_data = timeline[timeline['is_future'] == True]
+            if not future_data.empty:
+                # Filtrer pour garder seulement le vrai futur (après maintenant)
+                future_data = future_data[future_data['timestamp'] > now]
                 
-                Écart moyen: **{spread:.2f} €/MWh**
-                
-                Gain potentiel: **{spread * 0.8:.2f} €/MWh** (net)
-                """)
-
-def page_france(df_france, model, features):
-    """Page France détaillée"""
-    st.markdown("# 🇫🇷 France Détaillée")
-    st.markdown("""
-    *Analyse approfondie du marché français avec météo, production, et prédictions ML.*
-    
-    **Données disponibles :**
-    - 🌡️ **Météo** : Température, vent, pression (impact sur demande et production renouvelable)
-    - ⚡ **Production** : Mix énergétique par source (nucléaire, éolien, solaire, hydraulique, fossile)
-    - 📊 **Consommation** : Demande électrique en temps réel
-    - 🔮 **Prédictions 48h** : Prix futurs avec recommandations (heures optimales d'achat/vente)
-    - 🎯 **Modèle ML** : Random Forest & XGBoost entraînés sur 744h de données historiques
-    
-    **Utilisation trader :**
-    - Identifier les heures les moins chères pour acheter
-    - Anticiper les pics de demande (canicule, vague de froid)
-    - Optimiser les stratégies d'achat/vente selon le mix énergétique
-    """)
-    st.markdown("*Analyse approfondie du marché français : production, météo, prédictions ML*")
-    st.divider()
-    
-    # Onglets
-    tab1, tab2, tab3 = st.tabs(["📊 Production Mix", "🌡️ Météo", "📈 Prédictions"])
-    
-    with tab1:
-        st.markdown("### Mix Énergétique France")
-        st.caption("📊 Production électrique en temps réel")
-        
-        # Essayer d'abord les données RTE
-        prod_cols = [c for c in df_france.columns if 'production_gw' in c.lower()]
-        
-        # Vérifier si données RTE valides
-        has_valid_data = False
-        if len(prod_cols) > 0 and len(df_france) > 0:
-            latest_test = df_france.iloc[-1]
-            total_rte = sum([latest_test.get(c, 0) for c in prod_cols])
-            has_valid_data = total_rte > 0
-        
-        # Si pas de données valides, utiliser ENTSOE-E
-        if not has_valid_data:
-            st.info("📊 Chargement données ENTSOE-E...")
-            try:
-                from src.data.entsoe_api import EntsoeClient
-                from datetime import datetime, timedelta
-                
-                client = EntsoeClient()
-                
-                # Essayer plusieurs jours en arrière
-                prod_df = pd.DataFrame()
-                for days_back in range(1, 8):  # Essayer les 7 derniers jours
-                    end_date = datetime.now().date() - timedelta(days=days_back)
-                    start_date = end_date - timedelta(days=1)
+                if not future_data.empty:
+                    # Point de connexion (soit gap, soit dernier réel)
+                    connection_point = None
+                    gap_exists = not past_data.empty and (now - past_data['timestamp'].max()).total_seconds() / 3600 > 1
                     
-                    try:
-                        prod_df = client.get_actual_generation('FR', str(start_date), str(end_date))
-                        if not prod_df.empty:
-                            # Vérifier si données non nulles
-                            latest_test = prod_df.iloc[-1]
-                            test_vals = [latest_test.get(c, 0) for c in prod_df.columns if 'production' in c.lower()]
-                            if sum(test_vals) > 0:
-                                st.info(f"✅ Données trouvées pour le {end_date.strftime('%d/%m')}")
-                                break
-                    except:
-                        pass
-                
-                if not prod_df.empty and 'timestamp' in prod_df.columns:
-                    # Prendre la dernière ligne
-                    latest_entsoe = prod_df.iloc[-1]
+                    if gap_exists:
+                        # Connexion depuis le gap
+                        gap_data_for_conn = timeline[
+                            (timeline['is_future'] == True) & 
+                            (timeline['timestamp'] <= now)
+                        ]
+                        if not gap_data_for_conn.empty:
+                            last_gap = gap_data_for_conn.iloc[-1]
+                            connection_point = {
+                                'timestamp': last_gap['timestamp'],
+                                'predicted_price': last_gap['predicted_price']
+                            }
+                    elif not past_data.empty:
+                        # Connexion depuis dernier réel
+                        last_actual = past_data.iloc[-1]
+                        connection_point = {
+                            'timestamp': last_actual['timestamp'],
+                            'predicted_price': last_actual['actual_price']
+                        }
                     
-                    # Extraire valeurs
-                    nuclear = latest_entsoe.get('Nuclear_production_gw', latest_entsoe.get('nuclear_production_gw', 0))
-                    wind = latest_entsoe.get('Wind Onshore_production_gw', 0) + latest_entsoe.get('Wind Offshore_production_gw', 0)
-                    solar = latest_entsoe.get('Solar_production_gw', latest_entsoe.get('solar_production_gw', 0))
-                    hydro = (latest_entsoe.get('Hydro Run-of-river and poundage_production_gw', 0) + 
-                            latest_entsoe.get('Hydro Water Reservoir_production_gw', 0) +
-                            latest_entsoe.get('Hydro Pumped Storage_production_gw', 0))
-                    
-                    total = nuclear + wind + solar + hydro
-                    
-                    if total > 0:
-                        st.success("✅ Données ENTSOE-E chargées")
-                        
-                        # Métriques
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric("⚛️ Nucléaire", f"{nuclear:.1f} GW", f"{nuclear/total*100:.0f}%")
-                        col2.metric("🌬️ Éolien", f"{wind:.1f} GW", f"{wind/total*100:.0f}%")
-                        col3.metric("☀️ Solaire", f"{solar:.1f} GW", f"{solar/total*100:.0f}%")
-                        col4.metric("💧 Hydraulique", f"{hydro:.1f} GW", f"{hydro/total*100:.0f}%")
-                        
-                        # Pie chart
-                        import plotly.express as px
-                        data = {'Source': ['⚛️ Nucléaire', '🌬️ Éolien', '☀️ Solaire', '💧 Hydraulique'],
-                                'Production (GW)': [nuclear, wind, solar, hydro]}
-                        df_mix = pd.DataFrame(data)
-                        df_mix = df_mix[df_mix['Production (GW)'] > 0]
-                        
-                        fig = px.pie(df_mix, values='Production (GW)', names='Source', 
-                                    title=f"Mix Énergétique - {latest_entsoe['timestamp'].strftime('%d/%m %Hh')}",
-                                    template='plotly_dark',
-                                    color_discrete_sequence=px.colors.sequential.Oranges_r)
-                        fig.update_traces(textposition='inside', textinfo='percent+label')
-                        fig.update_layout(paper_bgcolor='#0c0c0c', plot_bgcolor='#161616')
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.markdown("---")
-                        
-                        # Graphique évolution 24h (comme l'original)
-                        st.markdown("### 📈 Évolution Production 24h")
-                        
-                        # Prendre les dernières 24h de données
-                        if len(prod_df) >= 24:
-                            last_24h = prod_df.tail(24)
-                        else:
-                            last_24h = prod_df
-                        
-                        if not last_24h.empty:
-                            import plotly.graph_objects as go
-                            fig_evolution = go.Figure()
-                            
-                            # Nucléaire (rouge/orange)
-                            if nuclear > 0:
-                                nuc_col = [c for c in last_24h.columns if 'nuclear' in c.lower() or 'nucl' in c.lower()]
-                                if nuc_col:
-                                    fig_evolution.add_trace(go.Scatter(
-                                        x=last_24h['timestamp'],
-                                        y=last_24h[nuc_col[0]],
-                                        name='⚛️ Nucléaire',
-                                        line=dict(color='#ff6b35', width=3)
-                                    ))
-                            
-                            # Éolien (bleu)
-                            if wind > 0:
-                                wind_cols = [c for c in last_24h.columns if 'wind' in c.lower()]
-                                if wind_cols:
-                                    wind_sum = last_24h[wind_cols].sum(axis=1)
-                                    fig_evolution.add_trace(go.Scatter(
-                                        x=last_24h['timestamp'],
-                                        y=wind_sum,
-                                        name='🌬️ Éolien',
-                                        line=dict(color='#3b82f6', width=2)
-                                    ))
-                            
-                            # Solaire (jaune)
-                            if solar > 0:
-                                solar_col = [c for c in last_24h.columns if 'solar' in c.lower()]
-                                if solar_col:
-                                    fig_evolution.add_trace(go.Scatter(
-                                        x=last_24h['timestamp'],
-                                        y=last_24h[solar_col[0]],
-                                        name='☀️ Solaire',
-                                        line=dict(color='#fbbf24', width=2)
-                                    ))
-                            
-                            # Hydraulique (cyan)
-                            if hydro > 0:
-                                hydro_cols = [c for c in last_24h.columns if 'hydro' in c.lower()]
-                                if hydro_cols:
-                                    hydro_sum = last_24h[hydro_cols].sum(axis=1)
-                                    fig_evolution.add_trace(go.Scatter(
-                                        x=last_24h['timestamp'],
-                                        y=hydro_sum,
-                                        name='💧 Hydraulique',
-                                        line=dict(color='#06b6d4', width=2)
-                                    ))
-                            
-                            fig_evolution.update_layout(
-                                title="Production par Source - 24 Heures",
-                                xaxis_title="Heure",
-                                yaxis_title="Production (GW)",
-                                template='plotly_dark',
-                                paper_bgcolor='#0c0c0c',
-                                plot_bgcolor='#161616',
-                                height=450,
-                                hovermode='x unified',
-                                legend=dict(
-                                    yanchor="top",
-                                    y=0.99,
-                                    xanchor="left",
-                                    x=0.01
-                                )
-                            )
-                            
-                            st.plotly_chart(fig_evolution, use_container_width=True)
-                        else:
-                            st.info("Pas assez de données pour le graphique d'évolution")
+                    # Créer série avec point de connexion
+                    if connection_point:
+                        future_timestamps = [connection_point['timestamp']] + future_data['timestamp'].tolist()
+                        future_prices = [connection_point['predicted_price']] + future_data['predicted_price'].tolist()
                     else:
-                        st.warning("⚠️ Aucune donnée de production disponible")
-                        st.info("""
-                        💡 **Pourquoi ?**
-                        - Les APIs RTE et ENTSOE-E n'ont pas publié de données récentes
-                        - Délai de publication habituel : 1-2 jours
-                        - Les données apparaîtront dès leur mise à jour
-                        
-                        **En attendant**, utilisez les autres onglets :
-                        - 🌡️ Météo (fonctionne)
-                        - 📈 Prédictions 48h (fonctionne)
-                        """)
+                        future_timestamps = future_data['timestamp'].tolist()
+                        future_prices = future_data['predicted_price'].tolist()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=future_timestamps,
+                        y=future_prices,
+                        mode='lines',
+                        name='Prix Prédit (Futur)',
+                        line=dict(color='#f97316', width=3, dash='dash'),
+                        hovertemplate='%{x}<br>Prédiction: %{y:.2f} €/MWh<extra></extra>'
+                    ))
+            
+            # Marker "MAINTENANT" - Bulle blanche élégante
+            y_min = timeline[['actual_price', 'predicted_price']].min().min()
+            y_max = timeline[['actual_price', 'predicted_price']].max().max()
+            
+            if pd.notna(y_min) and pd.notna(y_max):
+                # Ligne verticale fine (discrète)
+                fig_timeline.add_trace(go.Scatter(
+                    x=[now, now],
+                    y=[y_min * 0.95, y_max * 1.05],
+                    mode='lines',
+                    name='NOW',
+                    line=dict(color='rgba(255, 255, 255, 0.3)', width=1, dash='dot'),
+                    hoverinfo='skip',
+                    showlegend=False
+                ))
+                
+                # Trouver le prix à l'heure actuelle
+                closest_past = past_data[past_data['timestamp'] <= now].tail(1)
+                if not closest_past.empty:
+                    current_price = closest_past['actual_price'].iloc[0]
                 else:
-                    st.error("❌ ENTSOE-E vide")
-            except Exception as e:
-                st.error(f"❌ Erreur ENTSOE-E: {e}")
-                st.caption("💡 Les données de production seront disponibles prochainement")
-        
+                    current_price = (y_min + y_max) / 2
+                
+                # Bulle NOW (marker sur la courbe)
+                fig_timeline.add_trace(go.Scatter(
+                    x=[now],
+                    y=[current_price],
+                    mode='markers+text',
+                    name='MAINTENANT',
+                    marker=dict(
+                        size=16,
+                        color='white',
+                        line=dict(color='#f97316', width=3),  # Bordure orange Mistral
+                        opacity=0.95
+                    ),
+                    text=['NOW'],
+                    textposition='top center',
+                    textfont=dict(
+                        size=11,
+                        color='white',
+                        family='Arial, sans-serif'
+                    ),
+                    hovertemplate=(
+                        '<b style="color:#f97316;">MAINTENANT</b><br>' +
+                        f'<b>{now.strftime("%d %b %H:%M")}</b><br>' +
+                        f'Prix: <b>{current_price:.2f} €/MWh</b>' +
+                        '<extra></extra>'
+                    ),
+                    showlegend=False
+                ))
+            
+            # Zones passé/futur (fond coloré)
+            if not past_data.empty:
+                fig_timeline.add_vrect(
+                    x0=past_data['timestamp'].min(),
+                    x1=now,
+                    fillcolor='rgba(59, 130, 246, 0.1)',
+                    layer='below',
+                    line_width=0,
+                    annotation_text='Passé',
+                    annotation_position='top left'
+                )
+            
+            if not future_data.empty:
+                fig_timeline.add_vrect(
+                    x0=now,
+                    x1=future_data['timestamp'].max(),
+                    fillcolor='rgba(249, 115, 22, 0.1)',
+                    layer='below',
+                    line_width=0,
+                    annotation_text='Futur',
+                    annotation_position='top right'
+                )
+            
+            # Centrer timeline sur MAINTENANT (scroll automatique)
+            # Vue symétrique: 30h avant ← NOW (centre exact) → 30h après
+            x_min = now - pd.Timedelta(hours=30)
+            x_max = now + pd.Timedelta(hours=30)
+            
+            fig_timeline.update_layout(
+                title=dict(
+                    text=f"<b>Timeline Unifiée</b> · Centrée sur MAINTENANT · {now.strftime('%d %b %H:%M')}",
+                    font=dict(size=18, color='white'),
+                    x=0.5,
+                    xanchor='center'
+                ),
+                xaxis_title="",  # Minimaliste
+                yaxis_title="Prix (€/MWh)",
+                hovermode='x unified',
+                template='plotly_dark',
+                height=600,
+                paper_bgcolor='rgba(10, 10, 10, 0.8)',  # Glass dark
+                plot_bgcolor='rgba(26, 26, 26, 0.5)',   # Glass
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor='rgba(26, 26, 26, 0.7)',
+                    bordercolor='rgba(255, 255, 255, 0.1)',
+                    borderwidth=1
+                ),
+                xaxis=dict(
+                    range=[x_min, x_max],  # Fenêtre fixe centrée sur NOW
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.05)',
+                    rangeslider=dict(visible=False),
+                    zeroline=False
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.05)',
+                    zeroline=False
+                ),
+                font=dict(
+                    family='Arial, sans-serif',
+                    color='rgba(255, 255, 255, 0.9)'
+                )
+            )
+            
+            # Info scrolling
+            st.caption("📍 **Timeline centrée sur MAINTENANT** - Vue symétrique: 30h passé ← 🔴 NOW → 30h futur (scroll automatique)")
+            
+            st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # Statistiques Timeline
+            st.subheader("📊 Statistiques Timeline")
+            
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                n_past = len(past_data)
+                st.metric("🕐 Points Historiques", f"{n_past}h", help="Heures de données passées")
+            
+            with col2:
+                n_future = len(future_data)
+                st.metric("🔮 Points Futurs", f"{n_future}h", help="Heures de prédictions")
+            
+            with col3:
+                # Accuracy des prédictions historiques
+                if 'historical_predicted_price' in past_data.columns:
+                    historical_with_preds = past_data[past_data['historical_predicted_price'].notna()]
+                    if not historical_with_preds.empty:
+                        mae = (historical_with_preds['historical_predicted_price'] - historical_with_preds['actual_price']).abs().mean()
+                        mape = (mae / historical_with_preds['actual_price'].mean()) * 100
+                        st.metric(
+                            "🎯 Accuracy Prédictions", 
+                            f"{mae:.2f} €/MWh",
+                            delta=f"{mape:.1f}% erreur",
+                            delta_color="inverse",
+                            help=f"Basé sur {len(historical_with_preds)} prédictions passées"
+                        )
+                    else:
+                        st.metric("🎯 Accuracy", "N/A", help="Pas encore de prédictions historiques")
+                else:
+                    st.metric("🎯 Accuracy", "Bientôt...", help="Données en cours de collecte (quelques heures)")
+            
+            with col4:
+                if not past_data.empty:
+                    avg_past = past_data['actual_price'].mean()
+                    st.metric("💰 Prix Moyen Passé", f"{avg_past:.2f} €/MWh")
+                else:
+                    st.metric("💰 Prix Moyen Passé", "N/A")
+            
+            with col5:
+                if not future_data.empty:
+                    avg_future = future_data['predicted_price'].mean()
+                    st.metric("💰 Prix Moyen Futur", f"{avg_future:.2f} €/MWh")
+                else:
+                    st.metric("💰 Prix Moyen Futur", "N/A")
+            
+            # Info stockage
+            st.info(f"""
+            💾 **Base de données:**
+            - {len(timeline)} points timeline totaux
+            - Stockage automatique des prédictions
+            - Calcul accuracy temps réel
+            - Historique complet sauvegardé
+            """)
+            
         else:
-            # Données RTE disponibles
-            if len(df_france) > 0:
-                latest = df_france.iloc[-1]
-                
-                nuclear = latest.get('nuclear_production_gw', 0)
-                wind = sum([latest.get(c, 0) for c in prod_cols if 'wind' in c.lower()])
-                solar = latest.get('solar_production_gw', 0)
-                hydro = sum([latest.get(c, 0) for c in prod_cols if 'hydro' in c.lower()])
-                total = nuclear + wind + solar + hydro
-                
-                if total > 0:
-                    # Métriques
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("⚛️ Nucléaire", f"{nuclear:.1f} GW")
-                    col2.metric("🌬️ Éolien", f"{wind:.1f} GW")
-                    col3.metric("☀️ Solaire", f"{solar:.1f} GW")
-                    col4.metric("💧 Hydraulique", f"{hydro:.1f} GW")
-                    
-                    # Pie chart
-                    import plotly.express as px
-                    data = {'Source': ['Nucléaire', 'Éolien', 'Solaire', 'Hydraulique'],
-                            'Production': [nuclear, wind, solar, hydro]}
-                    df_mix = pd.DataFrame(data)
-                    df_mix = df_mix[df_mix['Production'] > 0]
-                    
-                    fig = px.pie(df_mix, values='Production', names='Source', 
-                                title="Mix Énergétique RTE",
-                                template='plotly_dark')
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Données RTE disponibles mais valeurs à zéro")
-            else:
-                st.info("DataFrame vide")
-
+            st.warning("⚠️ Timeline vide. Les données seront disponibles après quelques heures d'utilisation.")
+    
+    # TAB 2: TRADING SIGNALS (NOUVEAU!)
     with tab2:
-        st.markdown("### Données Météo & Impact Prix")
-        st.caption("🌡️ Corrélations entre conditions météo et prix de l'électricité")
+        st.subheader("📊 Signaux de Trading Professionnels")
         
-        if 'temperature_c' in df_france.columns and 'wind_speed_kmh' in df_france.columns:
-            # Métriques actuelles
-            latest = df_france.iloc[-1]
+        st.info("🎯 **Recommandations actionnables** basées sur prix actuels, prédictions et analyse du marché européen")
+        
+        try:
+            from src.trading.signals import TradingSignals
+            
+            # Initialiser générateur de signaux
+            signals = TradingSignals(
+                low_threshold=60.0,
+                high_threshold=90.0,
+                volatility_threshold=15.0
+            )
+            
+            # Récupérer données nécessaires
+            timeline = db.get_unified_timeline(lookback_hours=72, lookahead_hours=48)
+            
+            if not timeline.empty:
+                # Prix actuel (dernier prix réel)
+                now = pd.Timestamp.now()
+                past_data = timeline[timeline['is_future'] == False]
+                future_data = timeline[timeline['is_future'] == True]
+                
+                if not past_data.empty:
+                    current_price = past_data['actual_price'].iloc[-1]
+                else:
+                    current_price = df_full['price_eur_mwh'].iloc[-1]
+                
+                # Prédictions futures
+                predicted_prices = future_data['predicted_price'].dropna() if not future_data.empty else pd.Series()
+                
+                # Moyenne historique
+                historical_avg = past_data['actual_price'].mean() if not past_data.empty else df_full['price_eur_mwh'].mean()
+                
+                # Volatilité (écart-type sur 24h)
+                if not past_data.empty:
+                    recent_prices = past_data.tail(24)['actual_price']
+                    volatility = (recent_prices.std() / recent_prices.mean()) * 100
+                else:
+                    volatility = 10.0  # Default
+                
+                # CALCUL SCORE DE TRADING
+                trading_score = signals.calculate_trading_score(
+                    current_price=current_price,
+                    predicted_prices=predicted_prices,
+                    historical_avg=historical_avg,
+                    volatility=volatility
+                )
+                
+                # RECOMMANDATION
+                action, label, color = signals.get_recommendation(trading_score, current_price, predicted_prices)
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 1: SIGNAL PRINCIPAL
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🎯 Signal Trading - MAINTENANT")
+                
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.metric(
+                        label="💰 Prix Actuel",
+                        value=f"{current_price:.2f} €/MWh",
+                        delta=f"{((current_price - historical_avg) / historical_avg * 100):.1f}% vs moyenne"
+                    )
+                
+                with col2:
+                    # Score avec couleur
+                    if trading_score >= 75:
+                        score_color = "🟢"
+                    elif trading_score >= 60:
+                        score_color = "🟡"
+                    elif trading_score >= 40:
+                        score_color = "⚪"
+                    else:
+                        score_color = "🔴"
+                    
+                    st.metric(
+                        label="📊 Score de Trading",
+                        value=f"{trading_score}/100 {score_color}",
+                        help="Score basé sur prix, tendance, volatilité"
+                    )
+                
+                with col3:
+                    # Recommandation avec styling
+                    if action == 'BUY':
+                        st.success(f"### {label}")
+                    elif action == 'SELL':
+                        st.error(f"### {label}")
+                    elif action == 'HOLD':
+                        st.warning(f"### {label}")
+                    else:
+                        st.info(f"### {label}")
+                
+                # Explications détaillées
+                st.markdown("#### 📋 Analyse Détaillée")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**📌 Raisons de la recommandation:**")
+                    
+                    # Prix vs moyenne
+                    price_diff = ((current_price - historical_avg) / historical_avg) * 100
+                    if price_diff < -10:
+                        st.markdown(f"✅ Prix **{abs(price_diff):.1f}% sous** la moyenne → Bon marché")
+                    elif price_diff > 10:
+                        st.markdown(f"❌ Prix **{price_diff:.1f}% au-dessus** de la moyenne → Cher")
+                    else:
+                        st.markdown(f"ℹ️ Prix proche de la moyenne ({price_diff:+.1f}%)")
+                    
+                    # Tendance future
+                    if not predicted_prices.empty:
+                        future_avg = predicted_prices.mean()
+                        trend = ((future_avg - current_price) / current_price) * 100
+                        
+                        if trend > 5:
+                            st.markdown(f"✅ Prévision **hausse {trend:.1f}%** → Acheter maintenant")
+                        elif trend < -5:
+                            st.markdown(f"⚠️ Prévision **baisse {abs(trend):.1f}%** → Attendre ou vendre")
+                        else:
+                            st.markdown(f"ℹ️ Prix stable prévu ({trend:+.1f}%)")
+                    
+                    # Volatilité
+                    if volatility > 15:
+                        st.markdown(f"⚠️ Volatilité **élevée** ({volatility:.1f}%) → Risque accru")
+                    elif volatility < 5:
+                        st.markdown(f"✅ Marché **stable** ({volatility:.1f}%) → Peu de risque")
+                    else:
+                        st.markdown(f"ℹ️ Volatilité normale ({volatility:.1f}%)")
+                
+                with col2:
+                    st.markdown("**💡 Actions Suggérées:**")
+                    
+                    if action == 'BUY':
+                        st.markdown("""
+                        - ✅ **Acheter maintenant** si besoin électricité
+                        - ✅ Verrouiller contrats spot
+                        - ✅ Reporter consommation différable
+                        - ⏰ Profiter prix bas
+                        """)
+                    elif action == 'SELL':
+                        st.markdown("""
+                        - ✅ **Vendre excédent** si possible
+                        - ✅ Reporter achats non urgents
+                        - ⏰ Attendre baisse prévue
+                        - 📉 Éviter achats spot
+                        """)
+                    elif action == 'HOLD':
+                        st.markdown("""
+                        - ✅ **Maintenir positions** actuelles
+                        - ✅ Prix raisonnable
+                        - ⏰ Surveiller évolution
+                        - 📊 Pas d'urgence
+                        """)
+                    else:  # WAIT
+                        st.markdown("""
+                        - ⏰ **Attendre** meilleure opportunité
+                        - 📊 Surveiller marché
+                        - 🔮 Opportunité prévue sous peu
+                        - ⚠️ Pas de position pour l'instant
+                        """)
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 2: TOP 5 OPPORTUNITÉS
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("⭐ Top 5 Opportunités (48h)")
+                
+                opportunities = signals.find_best_opportunities(timeline, top_n=5)
+                
+                if not opportunities.empty:
+                    for idx, opp in opportunities.iterrows():
+                        with st.expander(
+                            f"{'🟢' if opp['type'] == 'ACHAT' else '🔴'} {opp['timestamp'].strftime('%d %b %H:%M')} - "
+                            f"{opp['price']:.2f} €/MWh (Score: {opp['score']:.0f}/100)"
+                        ):
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Prix", f"{opp['price']:.2f} €/MWh")
+                            with col2:
+                                st.metric("Type", opp['type'])
+                            with col3:
+                                st.metric("Score", f"{opp['score']:.0f}/100")
+                            
+                            if opp['type'] == 'ACHAT':
+                                st.success(f"💡 Bon moment pour **acheter** - Prix {abs(current_price - opp['price']):.2f}€ sous prix actuel")
+                            else:
+                                st.error(f"💡 Bon moment pour **vendre** - Prix {abs(opp['price'] - current_price):.2f}€ au-dessus prix actuel")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 3: HEURES CREUSES/PLEINES
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("⏰ Heures Optimales (24h)")
+                
+                optimal = signals.get_optimal_hours(timeline, window_hours=24)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### 🟢 Heures Creuses (Achat)")
+                    if optimal['cheapest']:
+                        for hour in optimal['cheapest']:
+                            st.markdown(
+                                f"- **{hour['timestamp'].strftime('%d %b %H:%M')}** "
+                                f"→ {hour['price']:.2f} €/MWh"
+                            )
+                        
+                        if 'savings_pct' in optimal:
+                            st.success(f"💰 Économies potentielles: **{optimal['savings_pct']:.1f}%**")
+                    else:
+                        st.info("Pas encore de données futures")
+                
+                with col2:
+                    st.markdown("#### 🔴 Heures Pleines (Vente)")
+                    if optimal['most_expensive']:
+                        for hour in optimal['most_expensive']:
+                            st.markdown(
+                                f"- **{hour['timestamp'].strftime('%d %b %H:%M')}** "
+                                f"→ {hour['price']:.2f} €/MWh"
+                            )
+                        
+                        if 'max_price' in optimal and 'min_price' in optimal:
+                            spread = optimal['max_price'] - optimal['min_price']
+                            st.error(f"📊 Écart max: **{spread:.2f} €/MWh**")
+                    else:
+                        st.info("Pas encore de données futures")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 4: ALERTES
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🔔 Alertes Actives")
+                
+                alerts = signals.detect_alerts(current_price, predicted_prices, volatility)
+                
+                if alerts:
+                    for alert in alerts:
+                        if alert['severity'] == 'success':
+                            st.success(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        elif alert['severity'] == 'error':
+                            st.error(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        elif alert['severity'] == 'warning':
+                            st.warning(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                        else:
+                            st.info(f"**{alert['title']}**\n\n{alert['message']}\n\n💡 {alert['action']}")
+                else:
+                    st.info("✅ Pas d'alerte active - Marché normal")
+                
+                # ═══════════════════════════════════════════════
+                # SECTION 5: SPREAD ARBITRAGE EUROPE
+                # ═══════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("🌍 Opportunités d'Arbitrage Europe")
+                
+                try:
+                    from src.data.fetch_europe_prices import get_european_prices
+                    
+                    europe_df = get_european_prices()
+                    europe_prices = dict(zip(europe_df['country_code'], europe_df['price_eur_mwh']))
+                    
+                    arbitrage_opps = signals.calculate_arbitrage_spread(current_price, europe_prices)
+                    
+                    if arbitrage_opps:
+                        st.caption(f"💡 Spread = différence de prix entre France et autre pays. Spread élevé = opportunité d'arbitrage!")
+                        
+                        for opp in arbitrage_opps[:5]:  # Top 5
+                            country_name = europe_df[europe_df['country_code'] == opp['country']]['country_name'].values[0]
+                            
+                            if opp['opportunity']:
+                                with st.expander(
+                                    f"{'🟢' if opp['direction'] == 'IMPORT' else '🔴'} {country_name} - "
+                                    f"Spread: {abs(opp['spread']):.2f} €/MWh ({abs(opp['spread_pct']):.1f}%)"
+                                ):
+                                    col1, col2, col3 = st.columns(3)
+                                    
+                                    with col1:
+                                        st.metric("Prix", f"{opp['price']:.2f} €/MWh")
+                                    with col2:
+                                        st.metric("Spread", f"{opp['spread']:+.2f} €/MWh")
+                                    with col3:
+                                        st.metric("Direction", opp['direction'])
+                                    
+                                    if opp['direction'] == 'IMPORT':
+                                        st.success(f"💡 **Importer** de {country_name} vers France (prix {abs(opp['spread']):.2f}€ moins cher)")
+                                    else:
+                                        st.error(f"💡 **Exporter** de France vers {country_name} (prix {abs(opp['spread']):.2f}€ plus cher)")
+                    else:
+                        st.info("Pas d'opportunités d'arbitrage significatives actuellement")
+                
+                except Exception as e:
+                    st.warning(f"⚠️ Données Europe indisponibles: {str(e)}")
+            
+            else:
+                st.warning("⚠️ Pas de données timeline disponibles")
+        
+        except Exception as e:
+            st.error(f"❌ Erreur module trading: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # TAB 3: CARTE EUROPÉENNE
+    with tab3:
+        st.subheader("🗺️ Prix de l'Électricité en Europe")
+        
+        st.info("📊 Visualisation des prix spot sur le marché européen interconnecté (comme RTE éCO2mix)")
+        
+        try:
+            from src.data.fetch_europe_prices import get_european_prices
+            
+            # Récupérer prix européens
+            with st.spinner('🌍 Chargement prix européens...'):
+                europe_df = get_european_prices()
+            
+            # Métriques clés
+            col1, col2, col3, col4 = st.columns(4)
+            
+            france_price = europe_df[europe_df['country_code'] == 'FR']['price_eur_mwh'].values[0]
+            min_price = europe_df['price_eur_mwh'].min()
+            max_price = europe_df['price_eur_mwh'].max()
+            avg_price = europe_df['price_eur_mwh'].mean()
+            
+            cheapest_country = europe_df.iloc[0]['country_name']
+            most_expensive_country = europe_df.iloc[-1]['country_name']
+            
+            with col1:
+                st.metric(
+                    label="🇫🇷 France",
+                    value=f"{france_price:.2f} €/MWh",
+                    help="Prix spot France (référence)"
+                )
+            
+            with col2:
+                st.metric(
+                    label="💚 Moins cher",
+                    value=f"{min_price:.2f} €/MWh",
+                    delta=f"{min_price - france_price:.2f} vs FR",
+                    help=f"{cheapest_country}"
+                )
+            
+            with col3:
+                st.metric(
+                    label="🔥 Plus cher",
+                    value=f"{max_price:.2f} €/MWh",
+                    delta=f"{max_price - france_price:.2f} vs FR",
+                    help=f"{most_expensive_country}"
+                )
+            
+            with col4:
+                st.metric(
+                    label="📊 Moyenne UE",
+                    value=f"{avg_price:.2f} €/MWh",
+                    delta=f"{avg_price - france_price:.2f} vs FR"
+                )
+            
+            st.divider()
+            
+            # Carte interactive
+            st.subheader("🌍 Carte Interactive des Prix")
+            
+            import plotly.graph_objects as go
+            
+            # Créer figure
+            fig_map = go.Figure()
+            
+            # Ajouter points pour chaque pays
+            for _, row in europe_df.iterrows():
+                # Couleur basée sur prix
+                if row['price_eur_mwh'] < 60:
+                    color = '#10b981'  # Vert
+                    size = 15
+                elif row['price_eur_mwh'] < 80:
+                    color = '#f59e0b'  # Orange
+                    size = 18
+                else:
+                    color = '#ef4444'  # Rouge
+                    size = 21
+                
+                # Marker pour le pays
+                fig_map.add_trace(go.Scattergeo(
+                    lon=[row['longitude']],
+                    lat=[row['latitude']],
+                    text=row['country_name'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=size,
+                        color=color,
+                        line=dict(width=2, color='white'),
+                        opacity=0.9
+                    ),
+                    textposition='top center',
+                    textfont=dict(size=10, color='white'),
+                    hovertemplate=(
+                        f"<b>{row['country_name']}</b><br>" +
+                        f"Prix: {row['price_eur_mwh']:.2f} €/MWh<br>" +
+                        f"vs France: {row['diff_vs_france']:+.2f} €/MWh" +
+                        "<extra></extra>"
+                    ),
+                    name=row['country_name'],
+                    showlegend=False
+                ))
+            
+            # Configuration carte
+            fig_map.update_geos(
+                scope='europe',
+                projection_type='natural earth',
+                showland=True,
+                landcolor='rgb(30, 30, 30)',
+                showocean=True,
+                oceancolor='rgb(20, 20, 30)',
+                showcountries=True,
+                countrycolor='rgb(50, 50, 50)',
+                showlakes=True,
+                lakecolor='rgb(20, 20, 30)',
+                center=dict(lat=50, lon=10),
+                lonaxis_range=[-12, 30],
+                lataxis_range=[35, 70]
+            )
+            
+            fig_map.update_layout(
+                title=f"Prix Spot Électricité - Europe ({datetime.now().strftime('%d %b %Y %H:%M')})",
+                height=600,
+                template='plotly_dark',
+                margin=dict(l=0, r=0, t=50, b=0),
+                hoverlabel=dict(
+                    bgcolor='rgba(0,0,0,0.8)',
+                    font_size=12
+                )
+            )
+            
+            st.plotly_chart(fig_map, use_container_width=True)
+            
+            # Légende couleurs
             col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("🟢 **< 60 €/MWh** - Bon marché")
+            with col2:
+                st.markdown("🟠 **60-80 €/MWh** - Moyen")
+            with col3:
+                st.markdown("🔴 **> 80 €/MWh** - Cher")
+            
+            st.divider()
+            
+            # Tableau des prix
+            st.subheader("📊 Prix par Pays")
+            
+            # Préparer tableau
+            display_df = europe_df[['country_name', 'price_eur_mwh', 'diff_vs_france']].copy()
+            display_df.columns = ['Pays', 'Prix (€/MWh)', 'Écart vs France (€/MWh)']
+            
+            # Afficher en 3 colonnes
+            col1, col2, col3 = st.columns(3)
+            
+            n = len(display_df)
+            chunk_size = (n + 2) // 3
+            
+            with col1:
+                st.dataframe(
+                    display_df.iloc[:chunk_size].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            with col2:
+                st.dataframe(
+                    display_df.iloc[chunk_size:2*chunk_size].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            with col3:
+                st.dataframe(
+                    display_df.iloc[2*chunk_size:].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            # Informations
+            st.info("""
+            💡 **Réseau Européen Interconnecté:**
+            - Les prix convergent entre pays interconnectés
+            - Écarts de prix = saturation des capacités d'échange
+            - Mutualisation permet d'optimiser coûts et émissions CO2
+            
+            📊 **Sources:** EPEX Spot / ENTSO-E Transparency Platform (données simulées pour MVP)
+            """)
+            
+        except Exception as e:
+            st.error(f"❌ Erreur chargement carte: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # TAB 4: PRÉDICTIONS
+    with tab4:
+        st.subheader("📈 Prédictions vs Prix Réels")
+        
+        # Time series
+        fig_pred = go.Figure()
+        
+        # Récupérer timestamps pour X_test
+        test_timestamps = df_full.iloc[len(df_full) - len(y_test):]['timestamp']
+        
+        fig_pred.add_trace(go.Scatter(
+            x=test_timestamps,
+            y=y_test.values,
+            mode='lines',
+            name='Prix Réel',
+            line=dict(color='#3b82f6', width=2)
+        ))
+        
+        fig_pred.add_trace(go.Scatter(
+            x=test_timestamps,
+            y=y_pred,
+            mode='lines',
+            name='Prédiction',
+            line=dict(color='#f97316', width=2, dash='dash')
+        ))
+        
+        fig_pred.update_layout(
+            title="Évolution des Prix - Prédictions vs Réalité",
+            xaxis_title="Date",
+            yaxis_title="Prix (€/MWh)",
+            hovermode='x unified',
+            template='plotly_dark',
+            height=500
+        )
+        
+        st.plotly_chart(fig_pred, use_container_width=True)
+        
+        # Scatter plot
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig_scatter = px.scatter(
+                x=y_test,
+                y=y_pred,
+                labels={'x': 'Prix Réel (€/MWh)', 'y': 'Prix Prédit (€/MWh)'},
+                title="Corrélation Prédictions vs Réel",
+                template='plotly_dark'
+            )
+            fig_scatter.add_trace(go.Scatter(
+                x=[y_test.min(), y_test.max()],
+                y=[y_test.min(), y_test.max()],
+                mode='lines',
+                name='Parfait',
+                line=dict(color='red', dash='dash')
+            ))
+            fig_scatter.update_traces(marker=dict(color='#f97316', size=8))
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        
+        with col2:
+            # Distribution des erreurs
+            errors = y_test.values - y_pred
+            fig_errors = px.histogram(
+                x=errors,
+                nbins=30,
+                labels={'x': 'Erreur (€/MWh)', 'y': 'Fréquence'},
+                title="Distribution des Erreurs de Prédiction",
+                template='plotly_dark'
+            )
+            fig_errors.update_traces(marker_color='#f97316')
+            st.plotly_chart(fig_errors, use_container_width=True)
+    
+    # TAB 5: PRÉVISIONS FUTURES
+    with tab5:
+        st.subheader("🔮 Prévisions Prix 48h")
+        
+        st.info("🚀 **Nouveau!** Prédictions des prix pour les prochaines 48 heures basées sur prévisions météo")
+        
+        # Import fonction prédiction
+        try:
+            from src.models.predict_future import predict_future_prices
+            
+            with st.spinner('⏳ Calcul des prédictions futures...'):
+                # Prédire J+1 et J+2
+                future_predictions = predict_future_prices(
+                    model=model,
+                    feature_columns=features,
+                    historical_data=df_full,
+                    days=2
+                )
+            
+            if not future_predictions.empty:
+                # Séparer J+1 et J+2
+                today = pd.Timestamp.now().date()
+                future_predictions['date'] = future_predictions['timestamp'].dt.date
+                
+                j1_data = future_predictions[future_predictions['date'] == today + pd.Timedelta(days=1)]
+                j2_data = future_predictions[future_predictions['date'] == today + pd.Timedelta(days=2)]
+                
+                # Métriques J+1
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    avg_j1 = j1_data['predicted_price'].mean()
+                    st.metric(
+                        label="💰 Prix Moyen J+1",
+                        value=f"{avg_j1:.2f} €/MWh",
+                        delta=f"{avg_j1 - y_test.mean():.2f} vs aujourd'hui"
+                    )
+                
+                with col2:
+                    min_j1 = j1_data['predicted_price'].min()
+                    min_hour_j1 = j1_data.loc[j1_data['predicted_price'].idxmin(), 'hour']
+                    st.metric(
+                        label="📉 Prix Minimum J+1",
+                        value=f"{min_j1:.2f} €/MWh",
+                        delta=f"À {int(min_hour_j1)}h"
+                    )
+                
+                with col3:
+                    max_j1 = j1_data['predicted_price'].max()
+                    max_hour_j1 = j1_data.loc[j1_data['predicted_price'].idxmax(), 'hour']
+                    st.metric(
+                        label="📈 Prix Maximum J+1",
+                        value=f"{max_j1:.2f} €/MWh",
+                        delta=f"À {int(max_hour_j1)}h"
+                    )
+                
+                with col4:
+                    volatility_j1 = j1_data['predicted_price'].std()
+                    st.metric(
+                        label="📊 Volatilité J+1",
+                        value=f"{volatility_j1:.2f} €/MWh",
+                        delta="Écart-type"
+                    )
+                
+                # Graphique prédictions futures
+                fig_future = go.Figure()
+                
+                # J+1
+                fig_future.add_trace(go.Scatter(
+                    x=j1_data['timestamp'],
+                    y=j1_data['predicted_price'],
+                    mode='lines+markers',
+                    name='J+1 (Demain)',
+                    line=dict(color='#f97316', width=3),
+                    marker=dict(size=6)
+                ))
+                
+                # Intervalle confiance J+1
+                fig_future.add_trace(go.Scatter(
+                    x=j1_data['timestamp'].tolist() + j1_data['timestamp'].tolist()[::-1],
+                    y=j1_data['confidence_upper'].tolist() + j1_data['confidence_lower'].tolist()[::-1],
+                    fill='toself',
+                    fillcolor='rgba(249, 115, 22, 0.2)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='Intervalle confiance J+1',
+                    showlegend=True
+                ))
+                
+                # J+2
+                if not j2_data.empty:
+                    fig_future.add_trace(go.Scatter(
+                        x=j2_data['timestamp'],
+                        y=j2_data['predicted_price'],
+                        mode='lines+markers',
+                        name='J+2 (Après-demain)',
+                        line=dict(color='#3b82f6', width=3, dash='dash'),
+                        marker=dict(size=6)
+                    ))
+                
+                # Zones heures creuses/pointe
+                for idx, row in j1_data.iterrows():
+                    if row['is_peak_hour'] == 1:
+                        fig_future.add_vrect(
+                            x0=row['timestamp'],
+                            x1=row['timestamp'] + pd.Timedelta(hours=1),
+                            fillcolor='red',
+                            opacity=0.1,
+                            line_width=0
+                        )
+                
+                fig_future.update_layout(
+                    title="Prévisions Prix Électricité 48h",
+                    xaxis_title="Date et Heure",
+                    yaxis_title="Prix (€/MWh)",
+                    hovermode='x unified',
+                    template='plotly_dark',
+                    height=500,
+                    legend=dict(
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=0.01
+                    )
+                )
+                
+                st.plotly_chart(fig_future, use_container_width=True)
+                
+                # Recommandations
+                st.subheader("💡 Recommandations")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.success(f"""
+                    **🟢 Meilleurs moments pour consommer (prix bas):**
+                    
+                    J+1:
+                    - {int(j1_data.nsmallest(1, 'predicted_price').iloc[0]['hour'])}h: {j1_data['predicted_price'].min():.2f} €/MWh
+                    - {int(j1_data.nsmallest(2, 'predicted_price').iloc[1]['hour'])}h: {j1_data.nsmallest(2, 'predicted_price').iloc[1]['predicted_price']:.2f} €/MWh
+                    - {int(j1_data.nsmallest(3, 'predicted_price').iloc[2]['hour'])}h: {j1_data.nsmallest(3, 'predicted_price').iloc[2]['predicted_price']:.2f} €/MWh
+                    
+                    💰 **Économies potentielles:** {(max_j1 - min_j1):.2f} €/MWh
+                    """)
+                
+                with col2:
+                    st.warning(f"""
+                    **🔴 Heures à éviter (prix élevés):**
+                    
+                    J+1:
+                    - {int(j1_data.nlargest(1, 'predicted_price').iloc[0]['hour'])}h: {j1_data['predicted_price'].max():.2f} €/MWh
+                    - {int(j1_data.nlargest(2, 'predicted_price').iloc[1]['hour'])}h: {j1_data.nlargest(2, 'predicted_price').iloc[1]['predicted_price']:.2f} €/MWh
+                    - {int(j1_data.nlargest(3, 'predicted_price').iloc[2]['hour'])}h: {j1_data.nlargest(3, 'predicted_price').iloc[2]['predicted_price']:.2f} €/MWh
+                    
+                    ⚠️ **Surcoût potentiel:** {(max_j1 - avg_j1):.2f} €/MWh vs moyenne
+                    """)
+                
+                # Tableau détaillé
+                with st.expander("📋 Voir prédictions détaillées heure par heure"):
+                    display_df = future_predictions[['timestamp', 'predicted_price', 'temperature_c', 'wind_speed_kmh', 'confidence_lower', 'confidence_upper']].copy()
+                    display_df.columns = ['Date/Heure', 'Prix Prédit (€/MWh)', 'Température (°C)', 'Vent (km/h)', 'IC Bas', 'IC Haut']
+                    display_df['Date/Heure'] = display_df['Date/Heure'].dt.strftime('%Y-%m-%d %H:%M')
+                    st.dataframe(display_df, use_container_width=True)
+                
+            else:
+                st.error("❌ Impossible de générer les prédictions futures. Vérifiez les données météo.")
+                
+        except Exception as e:
+            st.error(f"❌ Erreur lors des prédictions futures: {e}")
+            st.info("💡 Cette fonctionnalité nécessite les données historiques et les prévisions météo.")
+    
+    # TAB 6: MÉTÉO
+    with tab6:
+        st.subheader("🌡️ Impact de la Météo sur les Prix")
+        
+        st.info("📊 **Analyse des corrélations** : Température, vent et radiation solaire influencent fortement la production d'énergie et donc les prix.")
+        
+        # Statistiques météo actuelles
+        if len(df_full) > 0:
+            latest = df_full.iloc[-1]
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 st.metric("🌡️ Température", f"{latest['temperature_c']:.1f}°C")
@@ -934,746 +1531,669 @@ def page_france(df_france, model, features):
                 st.metric("💨 Vent", f"{latest['wind_speed_kmh']:.1f} km/h")
             
             with col3:
-                if 'solar_radiation_wm2' in df_france.columns:
-                    st.metric("☀️ Radiation", f"{latest['solar_radiation_wm2']:.0f} W/m²")
+                st.metric("☀️ Radiation", f"{latest['solar_radiation_wm2']:.0f} W/m²")
             
-            st.markdown("---")
-            
-            # Graphiques scatter avec corrélations
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Vérifier colonnes nécessaires
-                if all(col in df_france.columns for col in ['temperature_c', 'price_eur_mwh']):
-                    # Ajouter colonne hour si manquante
-                    df_plot = df_france.copy()
-                    if 'hour' not in df_plot.columns and 'timestamp' in df_plot.columns:
-                        df_plot['hour'] = df_plot['timestamp'].dt.hour
-                    
-                    import plotly.express as px
-                    fig_temp = px.scatter(
-                        df_plot,
-                        x='temperature_c',
-                        y='price_eur_mwh',
-                        color='hour' if 'hour' in df_plot.columns else None,
-                        title="🌡️ Température vs Prix",
-                        labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                        template='plotly_dark',
-                        
-                        color_continuous_scale='Oranges'
-                    )
-                    fig_temp.update_layout(paper_bgcolor='#0c0c0c', height=400)
-                    st.plotly_chart(fig_temp, use_container_width=True)
-                else:
-                    st.info("📊 Données température non disponibles")
-            
-            with col2:
-                # Vérifier colonnes nécessaires
-                if all(col in df_france.columns for col in ['wind_speed_kmh', 'price_eur_mwh']):
-                    # Ajouter colonne hour si manquante
-                    df_plot = df_france.copy()
-                    if 'hour' not in df_plot.columns and 'timestamp' in df_plot.columns:
-                        df_plot['hour'] = df_plot['timestamp'].dt.hour
-                    
-                    fig_wind = px.scatter(
-                        df_plot,
-                        x='wind_speed_kmh',
-                        y='price_eur_mwh',
-                        color='hour' if 'hour' in df_plot.columns else None,
-                        title="💨 Vent vs Prix",
-                        labels={'wind_speed_kmh': 'Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
-                        template='plotly_dark',
-                        
-                        color_continuous_scale='Blues'
-                    )
-                    fig_wind.update_layout(paper_bgcolor='#0c0c0c', height=400)
-                    st.plotly_chart(fig_wind, use_container_width=True)
-                else:
-                    st.info("📊 Données vent non disponibles")
-        else:
-            st.warning("⚠️ Données météo non disponibles")
-    
-    with tab3:
-        st.markdown("### Prédictions 48h (ML)")
-        st.caption("🔮 Prévisions des prix basées sur Random Forest + données météo futures")
-        
-        try:
-            import plotly.graph_objects as go
-            from src.models.predict_future import predict_future_prices
-            
-            with st.spinner('⏳ Calcul des prédictions...'):
-                future_predictions = predict_future_prices(
-                    model=model,
-                    feature_columns=features,
-                    historical_data=df_france,
-                    days=2
-                )
-            
-            if not future_predictions.empty:
-                # Graphique prédictions
-                fig = go.Figure()
-                
-                fig.add_trace(go.Scatter(
-                    x=future_predictions['timestamp'],
-                    y=future_predictions['predicted_price'],
-                    mode='lines+markers',
-                    name='Prix Prédit',
-                    line=dict(color='#ff6b35', width=3),
-                    marker=dict(size=6)
-                ))
-                
-                # Intervalle confiance si disponible
-                if 'confidence_lower' in future_predictions.columns and 'confidence_upper' in future_predictions.columns:
-                    fig.add_trace(go.Scatter(
-                        x=future_predictions['timestamp'].tolist() + future_predictions['timestamp'].tolist()[::-1],
-                        y=future_predictions['confidence_upper'].tolist() + future_predictions['confidence_lower'].tolist()[::-1],
-                        fill='toself',
-                        fillcolor='rgba(249, 115, 22, 0.2)',
-                        line=dict(color='rgba(255,255,255,0)'),
-                        name='Intervalle confiance (95%)',
-                        showlegend=True
-                    ))
-                
-                fig.update_layout(
-                    title="Prévisions Prix Électricité 48h",
-                    xaxis_title="Date/Heure",
-                    yaxis_title="Prix (€/MWh)",
-                    template='plotly_dark',
-                    paper_bgcolor='#0c0c0c',
-                    plot_bgcolor='#161616',
-                    height=500
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Recommandations
-                st.markdown("#### 💡 Recommandations")
-                
-                avg_price = future_predictions['predicted_price'].mean()
-                min_price = future_predictions['predicted_price'].min()
-                max_price = future_predictions['predicted_price'].max()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    min_hour = future_predictions.loc[future_predictions['predicted_price'].idxmin()]
-                    st.success(f"""
-                    **🟢 Meilleur moment (prix bas) :**
-                    - {min_hour['timestamp'].strftime('%d/%m %Hh')} : **{min_price:.2f} €/MWh**
-                    - Économies potentielles : **{max_price - min_price:.2f} €/MWh**
-                    """)
-                
-                with col2:
-                    max_hour = future_predictions.loc[future_predictions['predicted_price'].idxmax()]
-                    st.warning(f"""
-                    **🔴 Heure à éviter (prix élevé) :**
-                    - {max_hour['timestamp'].strftime('%d/%m %Hh')} : **{max_price:.2f} €/MWh**
-                    - Surcoût vs moyenne : **{max_price - avg_price:.2f} €/MWh**
-                    """)
-            else:
-                st.error("Impossible de générer les prédictions")
-        
-        except Exception as e:
-            st.error(f"❌ Erreur prédictions: {e}")
-            st.info("💡 Assurez-vous que les APIs météo sont accessibles")
-
-def page_gap(supply_demand, prices_europe):
-    """Page Gap Offre/Demande"""
-    st.markdown("# ⚖️ Gap Offre/Demande")
-    st.markdown("""
-    *Surveillance de l'équilibre production/consommation pour anticiper les tensions sur le réseau.*
-    
-    **Indicateur clé : Reserve Margin**
-    - **Formule** : `(Production - Consommation) / Consommation × 100`
-    - **Interprétation** :
-      - 🔴 **< 5%** : CRITIQUE (risque blackout, prix explosifs)
-      - 🟠 **5-10%** : TENSION (prix élevés, acheter maintenant risqué)
-      - 🟢 **10-20%** : ÉQUILIBRÉ (prix normaux)
-      - 🔵 **> 20%** : SURPLUS (prix bas, opportunité d'achat)
-    
-    **Action trader :**
-    - **Tension/Critique** : Vendre à prix élevé, éviter d'acheter
-    - **Surplus** : Acheter massivement, stocker (si possible)
-    - **Équilibré** : Suivre recommandations ML
-    """)
-    st.markdown("*Surveillance de l'équilibre entre production et consommation pour anticiper les tensions sur le réseau*")
-    st.divider()
-    
-    if 'FR' not in supply_demand:
-        st.warning("Données gap non disponibles")
-        return
-    
-    from src.analysis.supply_demand import SupplyDemandAnalyzer
-    
-    analyzer = SupplyDemandAnalyzer()
-    analysis = analyzer.analyze_country_market(
-        supply_demand['FR']['production'],
-        supply_demand['FR']['load'],
-        prices_europe.get('FR')
-    )
-    
-    if analysis.empty:
-        st.warning("Analyse non disponible")
-        return
-    
-    # Situation actuelle
-    current = analyzer.get_current_situation(analysis)
-    
-    if current:
-        tension = current['tension']
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Production", f"{current['production_gw']:.1f} GW")
-        
-        with col2:
-            st.metric("Consommation", f"{current['load_gw']:.1f} GW")
-        
-        with col3:
-            st.metric("Gap", f"{current['gap_gw']:+.1f} GW")
+            with col4:
+                if 'wind_onshore_production_gw' in df_full.columns and 'wind_offshore_production_gw' in df_full.columns:
+                    wind_prod = latest['wind_onshore_production_gw'] + latest['wind_offshore_production_gw']
+                    st.metric("🌬️ Prod. Éolienne", f"{wind_prod:.2f} GW")
         
         st.markdown("---")
         
-        # Tension
-        badge_class = {
-            'CRITICAL': 'tension-critical',
-            'HIGH_TENSION': 'tension-high',
-            'TENSION': 'tension-medium',
-            'BALANCED': 'tension-balanced',
-            'SURPLUS': 'tension-surplus',
-            'HIGH_SURPLUS': 'tension-surplus'
-        }.get(tension['level'], 'tension-balanced')
+        # Corrélations
+        st.subheader("📊 Corrélations Météo → Prix")
         
-        st.markdown(f"""
-        <div class="glass-card">
-            <div class="tension-badge {badge_class}">
-                {tension['emoji']} {tension['level']}
-            </div>
-            <h3 style="margin-top:20px;">{tension['description']}</h3>
-            <p><strong>Impact Prix:</strong> {tension['price_impact']}</p>
-            <p><strong>Action Trader:</strong> {tension['trader_action']}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        if 'temperature_c' in df_full.columns and 'wind_speed_kmh' in df_full.columns:
+            corr_temp = df_full[['temperature_c', 'price_eur_mwh']].corr().iloc[0, 1]
+            corr_wind = df_full[['wind_speed_kmh', 'price_eur_mwh']].corr().iloc[0, 1]
+            corr_solar = df_full[['solar_radiation_wm2', 'price_eur_mwh']].corr().iloc[0, 1] if 'solar_radiation_wm2' in df_full.columns else 0
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                corr_color = '#00ff00' if corr_temp < -0.2 else ('#ffa500' if abs(corr_temp) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Température ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_temp:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Corrélation négative (normale)' if corr_temp < 0 else 'Corrélation positive'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                corr_color = '#00ff00' if corr_wind < -0.3 else ('#ffa500' if abs(corr_wind) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Vent ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_wind:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Plus de vent = prix ↓' if corr_wind < 0 else 'Plus de vent = prix ↑'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                corr_color = '#00ff00' if corr_solar < -0.2 else ('#ffa500' if abs(corr_solar) < 0.2 else '#ff6b35')
+                st.markdown(f"""
+                <div style="background: rgba(26,26,26,0.6); padding: 16px; border-radius: 8px; border-left: 3px solid {corr_color};">
+                    <div style="color: #888; font-size: 12px; text-transform: uppercase;">Solaire ↔ Prix</div>
+                    <div style="font-size: 24px; font-weight: 700; color: {corr_color}; margin-top: 8px;">
+                        {corr_solar:+.3f}
+                    </div>
+                    <div style="color: #aaa; font-size: 11px; margin-top: 4px;">
+                        {'Plus de soleil = prix ↓' if corr_solar < 0 else 'Plus de soleil = prix ↑'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         
-        # Graphique
-        st.markdown("### 📊 Historique Gap")
+        st.markdown("---")
         
-        fig = go.Figure()
+        # Visualisations scatter
+        col1, col2 = st.columns(2)
         
-        fig.add_trace(go.Scatter(
-            x=analysis['timestamp'],
-            y=analysis['gap_gw'],
-            mode='lines',
-            name='Gap',
+        with col1:
+            # Température vs Prix (avec régression)
+            fig_temp = px.scatter(
+                df_full,
+                x='temperature_c',
+                y='price_eur_mwh',
+                color='hour',
+                labels={'temperature_c': 'Température (°C)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                title="🌡️ Température vs Prix (par heure)",
+                template='plotly_dark',
+                color_continuous_scale='Oranges',
+                trendline='ols',
+                trendline_color_override='#ff6b35'
+            )
+            fig_temp.update_layout(height=400)
+            st.plotly_chart(fig_temp, use_container_width=True)
+        
+        with col2:
+            # Vent vs Prix (avec régression)
+            fig_wind = px.scatter(
+                df_full,
+                x='wind_speed_kmh',
+                y='price_eur_mwh',
+                color='hour',
+                labels={'wind_speed_kmh': 'Vitesse Vent (km/h)', 'price_eur_mwh': 'Prix (€/MWh)', 'hour': 'Heure'},
+                title="💨 Vent vs Prix (par heure)",
+                template='plotly_dark',
+                color_continuous_scale='Blues',
+                trendline='ols',
+                trendline_color_override='#3b82f6'
+            )
+            fig_wind.update_layout(height=400)
+            st.plotly_chart(fig_wind, use_container_width=True)
+        
+        # Timeline météo + prix
+        st.subheader("📈 Évolution Météo & Prix dans le Temps")
+        
+        fig_timeline = go.Figure()
+        
+        # Prix (échelle gauche)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['price_eur_mwh'],
+            name='Prix (€/MWh)',
             line=dict(color='#ff6b35', width=2),
-            fill='tozeroy',
-            fillcolor='rgba(255, 107, 53, 0.2)'
+            yaxis='y1'
         ))
         
-        fig.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
+        # Vent (échelle droite)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['wind_speed_kmh'],
+            name='Vent (km/h)',
+            line=dict(color='#3b82f6', width=2, dash='dash'),
+            yaxis='y2'
+        ))
         
-        fig.update_layout(
+        # Température (échelle droite)
+        fig_timeline.add_trace(go.Scatter(
+            x=df_full['timestamp'],
+            y=df_full['temperature_c'],
+            name='Température (°C)',
+            line=dict(color='#ffa500', width=2, dash='dot'),
+            yaxis='y3'
+        ))
+        
+        fig_timeline.update_layout(
+            title="Impact de la Météo sur les Prix (Multi-échelles)",
+            xaxis=dict(title="Date/Heure"),
+            yaxis=dict(
+                title="Prix (€/MWh)",
+                titlefont=dict(color="#ff6b35"),
+                tickfont=dict(color="#ff6b35")
+            ),
+            yaxis2=dict(
+                title="Vent (km/h)",
+                titlefont=dict(color="#3b82f6"),
+                tickfont=dict(color="#3b82f6"),
+                overlaying="y",
+                side="right"
+            ),
+            yaxis3=dict(
+                title="Température (°C)",
+                titlefont=dict(color="#ffa500"),
+                tickfont=dict(color="#ffa500"),
+                overlaying="y",
+                side="right",
+                position=0.95
+            ),
+            hovermode='x unified',
             template='plotly_dark',
-            paper_bgcolor='#0c0c0c',
-            plot_bgcolor='#161616',
-            height=400,
-            hovermode='x unified'
+            height=500,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01
+            )
         )
         
-        st.plotly_chart(fig, use_container_width=True)
-
-def page_arbitrage(predictions_europe):
-    """Page Arbitrage"""
-    st.markdown("# 💰 Arbitrage Cross-Border")
-    st.markdown("""
-    *Opportunités de trading transfrontalier entre marchés européens.*
-    
-    **Principe de l'arbitrage :**
-    1. **Acheter** dans un pays où le prix est bas (ex: France 50€/MWh)
-    2. **Vendre** dans un pays où le prix est élevé (ex: Allemagne 80€/MWh)
-    3. **Profit** = Écart de prix - Coûts de transport
-    
-    **Données affichées :**
-    - 📊 **Spreads** : Écarts de prix entre pays (€/MWh)
-    - 🚚 **Coûts transport** : Estimés selon capacités interconnexion
-    - 💰 **Marge nette** : Gain réel après frais
-    - 📦 **Volume optimal** : Quantité à trader pour maximiser le profit
-    
-    **Top Opportunités** : Classement des meilleures opérations par gain potentiel
-    """)
-    
-    from src.arbitrage.engine import ArbitrageEngine, generate_recommendation
-    from src.data.entsoe_api import EntsoeClient
-    
-    engine = ArbitrageEngine(predictions_europe)
-    opps = engine.calculate_all_opportunities()
-    
-    # Meilleure opportunité
-    best = engine.get_best_opportunity()
-    
-    if best:
-        reco = generate_recommendation(best, EntsoeClient.COUNTRY_NAMES)
+        st.plotly_chart(fig_timeline, use_container_width=True)
         
-        st.markdown(f"""
-        <div class="glass-card">
-            {reco.replace(chr(10), '<br>')}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Top opportunités
-    st.markdown("### 🏆 Top 10 Opportunités")
-    
-    if not opps.empty:
-        top10 = engine.get_top_opportunities(n=10, min_score=30)
+        # Insights
+        st.subheader("💡 Insights Météo")
         
-        if not top10.empty:
-            display = top10[['from_country', 'to_country', 'timestamp', 
-                           'spread_net', 'volume_optimal', 'gain_total', 'score']].copy()
+        # Jours les plus venteux = prix les plus bas?
+        if 'wind_speed_kmh' in df_full.columns:
+            windiest_days = df_full.nlargest(10, 'wind_speed_kmh')
+            avg_price_windy = windiest_days['price_eur_mwh'].mean()
+            avg_price_overall = df_full['price_eur_mwh'].mean()
+            wind_impact = avg_price_windy - avg_price_overall
             
-            display.columns = ['Achat', 'Vente', 'Heure', 'Spread (€/MWh)', 
-                              'Volume (MWh)', 'Gain (€)', 'Score']
-            
-            display['Heure'] = pd.to_datetime(display['Heure']).dt.strftime('%d/%m %H:%M')
-            
-            st.dataframe(display, use_container_width=True, hide_index=True)
-
-def page_contracts():
-    """Page Contrats"""
-    st.markdown("# 📊 Mes Contrats")
-    st.markdown("""
-    *Gestion des contrats clients et suivi des engagements de prix.*
-    
-    **Fonctionnalités :**
-    - ➕ **Ajouter contrat** : Client, volume (MWh/jour), prix garanti, date de livraison
-    - 📊 **Suivi exposition** : Calcul automatique de l'exposition (risque si prix spot > prix garanti)
-    - 💰 **P&L contrat** : Gain/perte par contrat selon évolution des prix
-    - 🔔 **Alertes** : Notification si marché spot dépasse le prix garanti (risque de perte)
-    
-    **Stratégie trader :**
-    - **Prix garanti élevé** → Acheter sur spot quand prix bas (hedge)
-    - **Prix garanti bas** → Risque si spot monte (acheter en avance)
-    - **Équilibre portefeuille** : Diversifier les échéances et les prix
-    """)
-    
-    _, db = init_clients()
-    contracts = db.get_active_contracts()
-    
-    if contracts.empty:
-        st.info("Aucun contrat actif")
-        
-        with st.expander("➕ Ajouter un contrat"):
-            with st.form("add_contract"):
-                client_name = st.text_input("Nom du client")
-                col1, col2 = st.columns(2)
-                with col1:
-                    volume = st.number_input("Volume (MWh)", min_value=0.0, value=100.0)
-                with col2:
-                    price = st.number_input("Prix garanti (€/MWh)", min_value=0.0, value=85.0)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    start = st.date_input("Début", value=datetime.now().date())
-                with col2:
-                    end = st.date_input("Fin", value=(datetime.now() + timedelta(days=365)).date())
-                
-                if st.form_submit_button("Ajouter"):
-                    db.add_contract(client_name, volume, price, str(start), str(end))
-                    st.success("✅ Contrat ajouté!")
-                    st.rerun()
-    else:
-        st.dataframe(contracts, use_container_width=True, hide_index=True)
-
-
-def page_predictions_detaillees(prices_europe, predictions_europe, df_france, model, features):
-    """Page Prédictions Détaillées Multi-Pays avec Recommandations Actions"""
-    st.markdown("# 🔮 Prédictions Détaillées Multi-Pays")
-    st.markdown("""
-    *Vue complète des prévisions de prix pour FR, DE, ES avec intervalles de confiance et recommandations d'actions précises.*
-    
-    **Ce que vous voyez ici :**
-    - 📊 **Graphiques par pays** : Prédictions 48h avec intervalles de confiance à 95%
-    - 💰 **Top 10 Actions** : Heures exactes d'achat (prix bas) et vente (prix élevés)
-    - 💱 **Opportunités Arbitrage** : Acheter dans un pays, vendre dans un autre
-    - 💡 **Recommandations** : Actions concrètes à mener dans les prochaines 48h
-    """)
-    st.divider()
-    
-    # ==========================================
-    # 1. PRÉDICTIONS PAR PAYS (3 pays principaux)
-    # ==========================================
-    
-    st.subheader("📊 Prédictions par Pays - 48 Heures")
-    
-    countries_to_predict = ['FR', 'DE', 'ES']
-    
-    for country in countries_to_predict:
-        if country not in predictions_europe or predictions_europe[country].empty:
-            continue
-        
-        with st.expander(f"🏴 {country} - Voir les prédictions détaillées", expanded=(country == 'FR')):
-            pred_df = predictions_europe[country].copy()
-            
-            if 'timestamp' not in pred_df.columns or 'predicted_price' not in pred_df.columns:
-                st.warning(f"Données incomplètes pour {country}")
-                continue
-            
-            # Stats
-            avg_price = pred_df['predicted_price'].mean()
-            min_price = pred_df['predicted_price'].min()
-            max_price = pred_df['predicted_price'].max()
-            volatility = pred_df['predicted_price'].std()
-            
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2 = st.columns(2)
             
             with col1:
-                st.metric("💰 Prix Moyen", f"{avg_price:.2f} €/MWh")
+                st.success(f"""
+                **🌬️ Impact du Vent:**
+                
+                - Prix moyen global: **{avg_price_overall:.2f} €/MWh**
+                - Prix lors des 10h les plus venteuses: **{avg_price_windy:.2f} €/MWh**
+                - Différence: **{wind_impact:+.2f} €/MWh** ({(wind_impact/avg_price_overall)*100:+.1f}%)
+                
+                {'✅ Le vent fait baisser les prix (plus de prod. éolienne)' if wind_impact < 0 else '⚠️ Le vent ne fait pas baisser les prix (surprenant!)'}
+                """)
+            
+            # Températures extrêmes = prix élevés?
+            temp_extreme_low = df_full[df_full['temperature_c'] < 5]
+            temp_extreme_high = df_full[df_full['temperature_c'] > 25]
+            temp_normal = df_full[(df_full['temperature_c'] >= 5) & (df_full['temperature_c'] <= 25)]
+            
+            avg_price_extreme = pd.concat([temp_extreme_low, temp_extreme_high])['price_eur_mwh'].mean() if len(temp_extreme_low) + len(temp_extreme_high) > 0 else avg_price_overall
+            avg_price_normal_temp = temp_normal['price_eur_mwh'].mean() if len(temp_normal) > 0 else avg_price_overall
+            temp_impact = avg_price_extreme - avg_price_normal_temp
+            
             with col2:
-                st.metric("📉 Prix Min", f"{min_price:.2f} €/MWh", 
-                         delta=f"-{avg_price - min_price:.2f} €")
+                st.warning(f"""
+                **🌡️ Impact des Températures Extrêmes:**
+                
+                - Prix moyentemp. normale (5-25°C): **{avg_price_normal_temp:.2f} €/MWh**
+                - Prix lors temp. extrêmes (<5°C ou >25°C): **{avg_price_extreme:.2f} €/MWh**
+                - Différence: **{temp_impact:+.2f} €/MWh** ({(temp_impact/avg_price_normal_temp)*100:+.1f}%)
+                
+                {'⚠️ Les températures extrêmes font monter les prix (+ de demande)' if temp_impact > 0 else '✅ Les températures extrêmes ne font pas monter les prix'}
+                """)
+    
+    # TAB 7: PRODUCTION
+    with tab7:
+        st.subheader("⚡ Production Électrique par Filière")
+        
+        st.info("📊 **Mix énergétique France** : Production par type de source (nucléaire, renouvelables, fossiles) en temps réel")
+        
+        # Sélectionner colonnes de production (exclure total)
+        prod_cols = [c for c in df_full.columns if 'production_gw' in c and c not in ['total_production_gw', 'total_rte_production_gw']]
+        
+        st.caption(f"📋 Colonnes de production disponibles: {len(prod_cols)}")
+        
+        if len(prod_cols) > 0:
+            # Production actuelle (dernière heure)
+            latest = df_full.iloc[-1]
+            
+            st.markdown("### ⚡ Production Actuelle")
+            
+            # Calculer les totaux par catégorie
+            nuclear = latest.get('nuclear_production_gw', 0)
+            hydro = sum([latest.get(c, 0) for c in prod_cols if 'hydro' in c])
+            wind = sum([latest.get(c, 0) for c in prod_cols if 'wind' in c])
+            solar = latest.get('solar_production_gw', 0)
+            fossil = sum([latest.get(c, 0) for c in prod_cols if any(f in c for f in ['gas', 'coal', 'oil'])])
+            other = sum([latest.get(c, 0) for c in prod_cols if any(o in c for o in ['biomass', 'waste'])])
+            
+            total_prod = nuclear + hydro + wind + solar + fossil + other
+            
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            
+            with col1:
+                pct = (nuclear / total_prod * 100) if total_prod > 0 else 0
+                st.metric("⚛️ Nucléaire", f"{nuclear:.2f} GW", f"{pct:.1f}%")
+            
+            with col2:
+                pct = (hydro / total_prod * 100) if total_prod > 0 else 0
+                st.metric("💧 Hydraulique", f"{hydro:.2f} GW", f"{pct:.1f}%")
+            
             with col3:
-                st.metric("📈 Prix Max", f"{max_price:.2f} €/MWh",
-                         delta=f"+{max_price - avg_price:.2f} €")
+                pct = (wind / total_prod * 100) if total_prod > 0 else 0
+                st.metric("🌬️ Éolien", f"{wind:.2f} GW", f"{pct:.1f}%")
+            
             with col4:
-                st.metric("📊 Volatilité", f"{volatility:.2f} €/MWh")
+                pct = (solar / total_prod * 100) if total_prod > 0 else 0
+                st.metric("☀️ Solaire", f"{solar:.2f} GW", f"{pct:.1f}%")
             
-            # Graphique avec intervalle de confiance
-            fig = go.Figure()
+            with col5:
+                pct = (fossil / total_prod * 100) if total_prod > 0 else 0
+                st.metric("🏭 Fossile", f"{fossil:.2f} GW", f"{pct:.1f}%")
             
-            # Prix prédit
-            fig.add_trace(go.Scatter(
-                x=pred_df['timestamp'],
-                y=pred_df['predicted_price'],
-                mode='lines+markers',
-                name='Prix Prédit',
-                line=dict(color='#ff6b35', width=3),
-                marker=dict(size=6)
-            ))
+            with col6:
+                st.metric("⚡ TOTAL", f"{total_prod:.2f} GW", "")
             
-            # Intervalle confiance (si disponible)
-            if 'confidence_lower' in pred_df.columns and 'confidence_upper' in pred_df.columns:
-                fig.add_trace(go.Scatter(
-                    x=pred_df['timestamp'].tolist() + pred_df['timestamp'].tolist()[::-1],
-                    y=pred_df['confidence_upper'].tolist() + pred_df['confidence_lower'].tolist()[::-1],
-                    fill='toself',
-                    fillcolor='rgba(249, 115, 22, 0.15)',
-                    line=dict(color='rgba(255,255,255,0)'),
-                    name='Intervalle confiance (95%)',
-                    showlegend=True,
-                    hoverinfo='skip'
+            st.markdown("---")
+            
+            # Pie chart (mix actuel)
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.markdown("### 🥧 Mix Énergétique Actuel")
+                
+                mix_data = pd.DataFrame({
+                    'Source': ['⚛️ Nucléaire', '💧 Hydraulique', '🌬️ Éolien', '☀️ Solaire', '🏭 Fossile', '♻️ Autre'],
+                    'Production': [nuclear, hydro, wind, solar, fossil, other]
+                })
+                mix_data = mix_data[mix_data['Production'] > 0]  # Retirer les 0
+                
+                fig_pie = px.pie(
+                    mix_data,
+                    values='Production',
+                    names='Source',
+                    title=f"Mix Énergétique - {latest['timestamp'].strftime('%d/%m/%Y %H:%M')}",
+                    template='plotly_dark',
+                    color_discrete_sequence=px.colors.sequential.Oranges_r
+                )
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col2:
+                st.markdown("### 📊 Répartition Renouvelables vs Non-Renouvelables")
+                
+                renewable = hydro + wind + solar + other
+                non_renewable = nuclear + fossil
+                
+                fig_ren = go.Figure(data=[go.Pie(
+                    labels=['🌱 Renouvelables', '⚛️ Non-Renouvelables'],
+                    values=[renewable, non_renewable],
+                    hole=0.4,
+                    marker=dict(colors=['#10b981', '#ef4444'])
+                )])
+                
+                fig_ren.update_traces(textposition='inside', textinfo='percent+label')
+                fig_ren.update_layout(
+                    title="Part des Renouvelables",
+                    template='plotly_dark',
+                    height=400
+                )
+                st.plotly_chart(fig_ren, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Stacked area chart (évolution dans le temps)
+            st.markdown("### 📈 Évolution de la Production par Source")
+            
+            # Préparer données pour stacked area
+            prod_data = df_full[['timestamp'] + prod_cols].copy()
+            prod_data = prod_data.set_index('timestamp')
+            
+            # Renommer joliment
+            rename_map = {
+                c: c.replace('_production_gw', '').replace('_', ' ').title()
+                for c in prod_cols
+            }
+            prod_data = prod_data.rename(columns=rename_map)
+            
+            fig_stack = go.Figure()
+            
+            colors = {
+                'Nuclear': '#ff6b35',
+                'Wind Onshore': '#3b82f6',
+                'Wind Offshore': '#60a5fa',
+                'Solar': '#fbbf24',
+                'Hydro Reservoir': '#10b981',
+                'Hydro River': '#34d399',
+                'Hydro Pumped': '#6ee7b7',
+                'Gas': '#94a3b8',
+                'Coal': '#64748b',
+                'Oil': '#475569',
+                'Biomass': '#84cc16',
+                'Waste': '#a3e635'
+            }
+            
+            for col in prod_data.columns:
+                fig_stack.add_trace(go.Scatter(
+                    x=prod_data.index,
+                    y=prod_data[col],
+                    name=col,
+                    mode='lines',
+                    stackgroup='one',
+                    line=dict(width=0),
+                    fillcolor=colors.get(col, 'rgba(100, 100, 100, 0.5)')
                 ))
             
-            # Ligne moyenne
-            fig.add_hline(y=avg_price, line_dash="dash", line_color="white", 
-                         opacity=0.3, annotation_text=f"Moyenne: {avg_price:.2f}€")
-            
-            fig.update_layout(
-                title=f"Prévisions {country} - 48 Heures",
+            fig_stack.update_layout(
+                title="Production Électrique par Source (GW) - Stacked Area",
                 xaxis_title="Date/Heure",
-                yaxis_title="Prix (€/MWh)",
+                yaxis_title="Production (GW)",
+                hovermode='x unified',
                 template='plotly_dark',
-                paper_bgcolor='#0c0c0c',
-                plot_bgcolor='#161616',
-                height=450,
-                hovermode='x unified'
+                height=500,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor='rgba(26, 26, 26, 0.7)'
+                )
             )
             
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # ==========================================
-    # 2. TOP 10 ACTIONS FUTURES
-    # ==========================================
-    
-    st.markdown("---")
-    st.subheader("💎 Top 10 Actions Recommandées (48h)")
-    st.caption("🎯 Heures optimales pour acheter (prix bas) et vendre (prix élevés) sur chaque marché")
-    
-    all_actions = []
-    
-    for country in countries_to_predict:
-        if country not in predictions_europe or predictions_europe[country].empty:
-            continue
-        
-        pred_df = predictions_europe[country].copy()
-        
-        if 'timestamp' not in pred_df.columns or 'predicted_price' not in pred_df.columns:
-            continue
-        
-        # Top 5 heures ACHAT (prix bas)
-        cheapest = pred_df.nsmallest(5, 'predicted_price')
-        for _, row in cheapest.iterrows():
-            all_actions.append({
-                'Action': 'ACHAT 🟢',
-                'Pays': country,
-                'Heure': row['timestamp'].strftime('%d/%m %Hh'),
-                'Prix': row['predicted_price'],
-                'Type': 'buy',
-                'Économie': pred_df['predicted_price'].mean() - row['predicted_price']
-            })
-        
-        # Top 5 heures VENTE (prix élevés)
-        most_expensive = pred_df.nlargest(5, 'predicted_price')
-        for _, row in most_expensive.iterrows():
-            all_actions.append({
-                'Action': 'VENTE 🔴',
-                'Pays': country,
-                'Heure': row['timestamp'].strftime('%d/%m %Hh'),
-                'Prix': row['predicted_price'],
-                'Type': 'sell',
-                'Gain': row['predicted_price'] - pred_df['predicted_price'].mean()
-            })
-    
-    # Trier par économie/gain
-    all_actions_df = pd.DataFrame(all_actions)
-    
-    if not all_actions_df.empty:
-        # Calculer score combiné
-        all_actions_df['Score'] = all_actions_df.apply(
-            lambda x: x.get('Économie', x.get('Gain', 0)), axis=1
-        )
-        all_actions_df = all_actions_df.nlargest(10, 'Score')
-        
-        # Afficher sous forme de cartes
-        for idx, row in all_actions_df.iterrows():
-            col1, col2 = st.columns([3, 1])
+            st.plotly_chart(fig_stack, use_container_width=True)
+            
+            # Insights
+            st.markdown("### 💡 Insights Production")
+            
+            col1, col2 = st.columns(2)
             
             with col1:
-                is_buy = row['Type'] == 'buy'
-                emoji = '🟢' if is_buy else '🔴'
-                action_type = 'ACHAT' if is_buy else 'VENTE'
-                benefit_label = 'Économie' if is_buy else 'Gain'
-                benefit_value = row.get('Économie', row.get('Gain', 0))
+                # Part des renouvelables moyenne
+                avg_renewable_pct = (df_full[[c for c in prod_cols if any(r in c for r in ['wind', 'solar', 'hydro'])]].sum(axis=1) / df_full[[c for c in prod_cols]].sum(axis=1) * 100).mean()
                 
-                st.markdown(f"""
-                <div style="
-                    background: linear-gradient(135deg, {"#0d4d0d" if is_buy else "#4d0d0d"} 0%, #1a1a1a 100%);
-                    border-left: 4px solid {"#00ff00" if is_buy else "#ff0000"};
-                    border-radius: 8px;
-                    padding: 15px;
-                    margin: 10px 0;
-                ">
-                    <h4 style="margin: 0; color: {"#00ff00" if is_buy else "#ff6666"};">
-                        {emoji} {action_type} - {row['Pays']}
-                    </h4>
-                    <p style="margin: 5px 0; font-size: 1.1rem;">
-                        📅 <strong>{row['Heure']}</strong> • Prix: <strong>{row['Prix']:.2f} €/MWh</strong>
-                    </p>
-                    <p style="margin: 0; color: #a0a0a0;">
-                        💰 {benefit_label} potentiel: <strong style="color: {"#00ff00" if is_buy else "#ff6666"};">
-                        {benefit_value:+.2f} €/MWh</strong>
-                    </p>
-                </div>
-                """, unsafe_allow_html=True)
+                st.success(f"""
+                **🌱 Part Moyenne des Renouvelables:**
+                
+                - **{avg_renewable_pct:.1f}%** de la production totale
+                - Objectif France 2030: **40%**
+                - {'✅ Au-dessus de l\'objectif!' if avg_renewable_pct > 40 else '⚠️ En dessous de l\'objectif'}
+                """)
             
             with col2:
-                # Badge rang
-                st.markdown(f"""
-                <div style="
-                    background: rgba(255, 107, 53, 0.2);
-                    border: 2px solid #ff6b35;
-                    border-radius: 50%;
-                    width: 60px;
-                    height: 60px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    margin: auto;
-                    margin-top: 15px;
-                ">
-                    <span style="font-size: 1.5rem; font-weight: bold; color: #ff6b35;">
-                        #{list(all_actions_df.index).index(idx) + 1}
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.info("Aucune action disponible pour le moment")
-    
-    # ==========================================
-    # 3. OPPORTUNITÉS ARBITRAGE CROSS-BORDER
-    # ==========================================
-    
-    st.markdown("---")
-    st.subheader("💱 Opportunités d'Arbitrage Cross-Border")
-    st.caption("🌍 Acheter dans un pays à prix bas, vendre dans un autre à prix élevé")
-    
-    arbitrage_opportunities = []
-    
-    for buy_country in countries_to_predict:
-        if buy_country not in predictions_europe:
-            continue
+                # Variabilité de la production éolienne/solaire
+                if 'wind_onshore_production_gw' in df_full.columns:
+                    wind_volatility = df_full['wind_onshore_production_gw'].std() / df_full['wind_onshore_production_gw'].mean() * 100 if df_full['wind_onshore_production_gw'].mean() > 0 else 0
+                    
+                    st.info(f"""
+                    **🌬️ Variabilité de l'Éolien:**
+                    
+                    - Coefficient de variation: **{wind_volatility:.1f}%**
+                    - {'⚠️ Production très variable (dépend du vent)' if wind_volatility > 50 else '✅ Production relativement stable'}
+                    - Importance du stockage et du backup
+                    """)
         
-        buy_pred = predictions_europe[buy_country]
-        
-        if buy_pred.empty or 'timestamp' not in buy_pred.columns:
-            continue
-        
-        for sell_country in countries_to_predict:
-            if sell_country == buy_country or sell_country not in predictions_europe:
-                continue
+        else:
+            st.warning("⚠️ Aucune donnée de production disponible. Vérifiez que les APIs RTE sont accessibles.")
+            st.caption(f"Colonnes disponibles dans df_full: {list(df_full.columns)}")
             
-            sell_pred = predictions_europe[sell_country]
-            
-            if sell_pred.empty or 'timestamp' not in sell_pred.columns:
-                continue
-            
-            # Merge sur timestamp
-            merged = pd.merge(
-                buy_pred[['timestamp', 'predicted_price']],
-                sell_pred[['timestamp', 'predicted_price']],
-                on='timestamp',
-                suffixes=('_buy', '_sell')
-            )
-            
-            if merged.empty:
-                continue
-            
-            # Calculer spread
-            merged['spread'] = merged['predicted_price_sell'] - merged['predicted_price_buy']
-            merged['transport_cost'] = 2.0  # €/MWh (estimation)
-            merged['net_margin'] = merged['spread'] - merged['transport_cost']
-            
-            # Garder opportunités rentables
-            profitable = merged[merged['net_margin'] > 5]  # Minimum 5€/MWh de marge
-            
-            if not profitable.empty:
-                best = profitable.nlargest(1, 'net_margin').iloc[0]
+            # Prix moyen par heure
+            if 'hour' in df_full.columns:
+                hourly_prices = df_full.groupby('hour')['price_eur_mwh'].mean()
                 
-                arbitrage_opportunities.append({
-                    'Route': f"{buy_country} → {sell_country}",
-                    'Heure': best['timestamp'].strftime('%d/%m %Hh'),
-                    'Prix Achat': best['predicted_price_buy'],
-                    'Prix Vente': best['predicted_price_sell'],
-                    'Spread': best['spread'],
-                    'Coût Transport': best['transport_cost'],
-                    'Marge Nette': best['net_margin']
-                })
+                fig_hourly = go.Figure()
+                fig_hourly.add_trace(go.Bar(
+                    x=hourly_prices.index,
+                    y=hourly_prices.values,
+                    marker_color='#f97316'
+                ))
+                
+                fig_hourly.update_layout(
+                    title="Prix Moyen par Heure de la Journée",
+                    xaxis_title="Heure",
+                    yaxis_title="Prix (€/MWh)",
+                    template='plotly_dark',
+                    height=400
+                )
+                
+                st.plotly_chart(fig_hourly, use_container_width=True)
     
-    if arbitrage_opportunities:
-        arb_df = pd.DataFrame(arbitrage_opportunities).nlargest(5, 'Marge Nette')
+    # TAB 8: ANALYSE
+    with tab8:
+        st.subheader("🎯 Analyse ML & Feature Importance")
         
-        for idx, row in arb_df.iterrows():
-            st.success(f"""
-            **🚀 {row['Route']}**
-            
-            ⏰ Heure optimale: **{row['Heure']}**
-            
-            - 💰 Achat: {row['Prix Achat']:.2f} €/MWh
-            - 💰 Vente: {row['Prix Vente']:.2f} €/MWh
-            - 📊 Spread brut: {row['Spread']:.2f} €/MWh
-            - 🚚 Coût transport: {row['Coût Transport']:.2f} €/MWh
-            - ✅ **Marge nette: {row['Marge Nette']:.2f} €/MWh**
-            
-            💡 *Recommandation: Acheter en {row['Route'].split(' → ')[0]} et vendre en {row['Route'].split(' → ')[1]}*
+        # ═══════════════════════════════════════════════
+        # SECTION COMPARAISON MODÈLES (XGBoost vs RF)
+        # ═══════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("📊 Comparaison Modèles: XGBoost vs Random Forest")
+        
+        # Toggle pour activer XGBoost
+        use_xgboost = st.checkbox("🔬 Tester XGBoost (amélioration précision)", value=False, help="XGBoost = Gradient Boosting plus performant que Random Forest")
+        
+        if use_xgboost:
+            with st.spinner('🚀 Training XGBoost en cours... (~30 secondes)'):
+                try:
+                    from src.models.xgboost_model import train_xgboost_model
+                    
+                    # Récupérer R² actuel Random Forest
+                    rf_r2 = r2_score(y_test, y_pred)
+                    rf_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+                    rf_mae = mean_absolute_error(y_test, y_pred)
+                    
+                    rf_metrics = {
+                        'test': {
+                            'r2': rf_r2,
+                            'rmse': rf_rmse,
+                            'mae': rf_mae
+                        }
+                    }
+                    
+                    # Train XGBoost
+                    xgb_model, X_test_xgb, y_test_xgb, y_pred_xgb, features_xgb, metrics_xgb = train_xgboost_model(df_full)
+                    
+                    # Comparaison
+                    comparison_df = xgb_model.compare_with_rf(rf_metrics)
+                    
+                    st.success("✅ XGBoost entraîné avec succès!")
+                    
+                    # Tableau comparatif
+                    st.dataframe(
+                        comparison_df.style.highlight_max(axis=1, subset=['Random Forest', 'XGBoost'], color='lightgreen'),
+                        use_container_width=True
+                    )
+                    
+                    # Métriques side by side
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        rf_display = rf_r2
+                        xgb_display = metrics_xgb['test']['r2']
+                        delta = ((xgb_display - rf_display) / rf_display) * 100
+                        
+                        st.metric(
+                            "R² Score",
+                            f"{xgb_display:.4f}",
+                            delta=f"+{delta:.1f}% vs RF",
+                            help="XGBoost vs Random Forest"
+                        )
+                    
+                    with col2:
+                        rf_mae = rf_metrics['test']['mae']
+                        xgb_mae = metrics_xgb['test']['mae']
+                        delta_mae = ((rf_mae - xgb_mae) / rf_mae) * 100
+                        
+                        st.metric(
+                            "MAE (€/MWh)",
+                            f"{xgb_mae:.2f}",
+                            delta=f"-{delta_mae:.1f}% erreur",
+                            delta_color="inverse",
+                            help="Moins = mieux"
+                        )
+                    
+                    with col3:
+                        if xgb_display > rf_display:
+                            st.success("✅ **XGBoost MEILLEUR!**")
+                            st.markdown(f"Amélioration: **+{delta:.1f}%**")
+                        elif xgb_display == rf_display:
+                            st.info("⚖️ **Performances égales**")
+                        else:
+                            st.warning("⚠️ **RF meilleur** (rare)")
+                    
+                    # Graphiques comparatifs
+                    st.markdown("#### 📈 Prédictions: XGBoost vs Random Forest")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Random Forest
+                        fig_rf = go.Figure()
+                        fig_rf.add_trace(go.Scatter(
+                            x=y_test,
+                            y=y_pred,
+                            mode='markers',
+                            name='Random Forest',
+                            marker=dict(color='#3b82f6', size=5, opacity=0.6)
+                        ))
+                        fig_rf.add_trace(go.Scatter(
+                            x=[y_test.min(), y_test.max()],
+                            y=[y_test.min(), y_test.max()],
+                            mode='lines',
+                            name='Parfait',
+                            line=dict(color='red', dash='dash')
+                        ))
+                        fig_rf.update_layout(
+                            title=f"Random Forest (R²={rf_r2:.3f})",
+                            xaxis_title="Prix Réel",
+                            yaxis_title="Prix Prédit",
+                            template='plotly_dark',
+                            height=400
+                        )
+                        st.plotly_chart(fig_rf, use_container_width=True)
+                    
+                    with col2:
+                        # XGBoost
+                        fig_xgb = go.Figure()
+                        fig_xgb.add_trace(go.Scatter(
+                            x=y_test_xgb,
+                            y=y_pred_xgb,
+                            mode='markers',
+                            name='XGBoost',
+                            marker=dict(color='#f97316', size=5, opacity=0.6)
+                        ))
+                        fig_xgb.add_trace(go.Scatter(
+                            x=[y_test_xgb.min(), y_test_xgb.max()],
+                            y=[y_test_xgb.min(), y_test_xgb.max()],
+                            mode='lines',
+                            name='Parfait',
+                            line=dict(color='red', dash='dash')
+                        ))
+                        fig_xgb.update_layout(
+                            title=f"XGBoost (R²={xgb_display:.3f})",
+                            xaxis_title="Prix Réel",
+                            yaxis_title="Prix Prédit",
+                            template='plotly_dark',
+                            height=400
+                        )
+                        st.plotly_chart(fig_xgb, use_container_width=True)
+                    
+                    # Conclusion
+                    st.info(f"""
+                    💡 **Conclusion:**
+                    - XGBoost améliore la précision de **{delta:.1f}%** vs Random Forest
+                    - Erreur réduite de **{delta_mae:.1f}%** (MAE: {xgb_mae:.2f} vs {rf_mae:.2f} €/MWh)
+                    - {"✅ Recommandé pour production!" if delta > 2 else "⚖️ Performances similaires"}
+                    
+                    🎯 **Impact Trading:**
+                    - Prédictions plus précises = Signaux trading plus fiables
+                    - Moins d'erreur = Meilleure identification opportunités
+                    - Économies potentielles accrues
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"❌ Erreur XGBoost training: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        else:
+            st.info("ℹ️ Cochez la case ci-dessus pour comparer XGBoost vs Random Forest (prend ~30 secondes)")
+        
+        # ═══════════════════════════════════════════════
+        # SECTION FEATURE IMPORTANCE
+        # ═══════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("📊 Feature Importance - Random Forest")
+        
+        # Feature importance
+        importances = pd.DataFrame({
+            'Feature': features,
+            'Importance': model.feature_importances_
+        }).sort_values('Importance', ascending=True)
+        
+        fig_importance = go.Figure(go.Bar(
+            x=importances['Importance'],
+            y=importances['Feature'],
+            orientation='h',
+            marker_color='#f97316'
+        ))
+        
+        fig_importance.update_layout(
+            title="Importance des Variables dans le Modèle",
+            xaxis_title="Importance",
+            yaxis_title="Variable",
+            template='plotly_dark',
+            height=600
+        )
+        
+        st.plotly_chart(fig_importance, use_container_width=True)
+        
+        # Insights
+        st.subheader("💡 Insights Clés")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **📊 Performance du Modèle:**
+            - Le modèle explique **81%** de la variance des prix
+            - Erreur moyenne de seulement **5.5€/MWh**
+            - Prédictions fiables pour trading et optimisation
             """)
-    else:
-        st.info("Aucune opportunité d'arbitrage rentable détectée pour le moment")
-
-
-def page_ml(df_france, model, features, X_test, y_test):
-    """Page Modèles ML"""
-    st.markdown("# 🤖 Modèles ML")
+            
+            st.markdown("""
+            **🌡️ Impact Météo:**
+            - Température influence la demande (chauffage/clim)
+            - Vent ↑ → Production éolienne ↑ → Prix ↓
+            - Radiation solaire corrélée à production solaire
+            """)
+        
+        with col2:
+            st.markdown("""
+            **⚡ Production & Prix:**
+            - Heures de pointe (18h-20h) → Prix ↑
+            - Production renouvelable ↑ → Prix ↓
+            - Gap production-demande = signal fort
+            """)
+            
+            st.markdown("""
+            **🎯 Applications:**
+            - Trading d'électricité
+            - Optimisation consommation industrielle
+            - Planification production renouvelable
+            """)
+    
+    # ==========================================
+    # FOOTER
+    # ==========================================
+    
+    st.divider()
     st.markdown("""
-    *Comparaison des algorithmes de prédiction de prix et analyse de performance.*
-    
-    **Modèles entraînés :**
-    - 🌲 **Random Forest** : Robuste, interprétable, baseline solide
-    - ⚡ **XGBoost** : Performance supérieure, gestion des non-linéarités
-    
-    **Métriques d'évaluation :**
-    - **R² Score** : % de variance expliquée (plus proche de 1 = mieux)
-    - **RMSE** : Erreur moyenne en €/MWh (plus bas = mieux)
-    - **MAE** : Erreur absolue moyenne (robuste aux outliers)
-    
-    **Features importantes :**
-    - 🌡️ Température (impact chauffage/clim)
-    - 🌬️ Vent (production éolienne)
-    - ⏰ Heure/Jour (patterns temporels)
-    - ⚡ Demande/Production (équilibre réseau)
-    
-    **Utilisation :** Le meilleur modèle (plus haut R²) est utilisé pour les prédictions 48h
-    """)
-    
-    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-    
-    y_pred = model.predict(X_test)
-    r2 = r2_score(y_test, y_pred)
-    mae = mean_absolute_error(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("R² Score", f"{r2:.3f}")
-    
-    with col2:
-        st.metric("MAE", f"{mae:.2f} €/MWh")
-    
-    with col3:
-        st.metric("RMSE", f"{rmse:.2f} €/MWh")
-    
-    st.markdown("---")
-    
-    # Feature importance
-    st.markdown("### 📊 Feature Importance")
-    
-    importances = pd.DataFrame({
-        'feature': features,
-        'importance': model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    
-    fig = go.Figure(data=[go.Bar(
-        x=importances['importance'],
-        y=importances['feature'],
-        orientation='h',
-        marker_color='#ff6b35'
-    )])
-    
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#0c0c0c',
-        plot_bgcolor='#161616',
-        height=500
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    <div style='text-align: center; color: #666;'>
+        <p>💻 Développé par <strong>Paul-Antoine Sage</strong> | Account Executive & AI Enthusiast</p>
+        <p>📊 Données: RTE France + Open-Meteo | 🤖 Modèle: Random Forest | ⚡ Streamlit Dashboard</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ==========================================
-# MAIN
-# ==========================================
-
-def main():
-    # Chargement
-    try:
-        entsoe_client, db = init_clients()
-        df_france, prices_europe, predictions_europe, supply_demand = load_all_data()
-        model, features, df_full, X_test, y_test = train_models(df_france)
-    except Exception as e:
-        st.error(f"❌ Erreur chargement: {e}")
-        return
-    
-    # Navigation
-    page = show_sidebar()
-    
-    # Router
-    if page == "🏠 Vue d'Ensemble":
-        page_overview(df_france, prices_europe, predictions_europe, supply_demand, db, model, features, df_full)
-    elif page == "🌍 Europe":
-        page_europe(prices_europe, predictions_europe)
-    elif page == "🇫🇷 France Détaillée":
-        page_france(df_france, model, features)
-    elif page == "⚖️ Gap Offre/Demande":
-        page_gap(supply_demand, prices_europe)
-    elif page == "💰 Arbitrage":
-        page_arbitrage(predictions_europe)
-    elif page == "📊 Mes Contrats":
-        page_contracts()
-    elif page == "🔮 Prédictions Détaillées":
-        page_predictions_detaillees(prices_europe, predictions_europe, df_france, model, features)
-    elif page == "🤖 Modèles ML":
-        page_ml(df_france, model, features, X_test, y_test)
-
-if __name__ == "__main__":
-    main()
+except Exception as e:
+    st.error(f"❌ Erreur: {e}")
+    st.info("💡 Vérifiez que vos credentials RTE sont configurés dans le fichier .env")
 
